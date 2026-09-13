@@ -9,4 +9,5 @@ interface PlayerRepository {
 
     fun play(track: Track)
     fun togglePlayPause()
+    fun seekTo(positionMs: Long)
 }

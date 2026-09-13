@@ -43,6 +43,7 @@ private val audioPermission: String
 @Composable
 fun LibraryScreen(
     viewModel: LibraryViewModel,
+    onOpenNowPlaying: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -142,7 +143,7 @@ fun LibraryScreen(
                 albumArtUrl = track.albumArtUri,
                 isPlaying = playbackState.isPlaying,
                 onTogglePlayPause = viewModel::onTogglePlayPause,
-                onClick = { /* TODO(etap 1): otwórz Now Playing */ },
+                onClick = onOpenNowPlaying,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(tokens.spacing.m),

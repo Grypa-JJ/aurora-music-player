@@ -55,4 +55,8 @@ class LibraryViewModel @Inject constructor(
     fun onTogglePlayPause() {
         playerRepository.togglePlayPause()
     }
+
+    fun onSeek(positionMs: Long) {
+        playerRepository.seekTo(positionMs)
+    }
 }
