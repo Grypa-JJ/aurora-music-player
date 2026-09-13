@@ -15,6 +15,7 @@ import com.aurora.player.domain.repository.GeniusRepository
 import com.aurora.player.domain.repository.PlayerRepository
 import com.aurora.player.domain.usecase.GetTracksUseCase
 import com.aurora.player.visualizer.AudioVisualizerAnalyzer
+import com.aurora.player.visualizer.VisualizerFrame
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -51,7 +52,7 @@ class LibraryViewModel @Inject constructor(
     val cloudAccountEmail: StateFlow<String?> = googleDriveLibraryRepository.accountEmail
 
     /** Wizualizer widmowy Now Playing — patrz DESIGN.md, `AudioVisualizerAnalyzer`. */
-    val visualizerMagnitudes: StateFlow<FloatArray> = visualizerAnalyzer.magnitudes
+    val visualizerFrame: StateFlow<VisualizerFrame> = visualizerAnalyzer.frame
 
     private val _uiState = MutableStateFlow(LibraryUiState())
     val uiState: StateFlow<LibraryUiState> = _uiState.asStateFlow()

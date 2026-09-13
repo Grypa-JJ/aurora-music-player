@@ -20,6 +20,11 @@ import kotlin.math.sqrt
  * [BAND_COUNT] pasm pasmowoprzepustowych (BiquadFilter w trybie BPF) rozstawionych logarytmicznie
  * między [MIN_FREQ_HZ] a [MAX_FREQ_HZ]; RMS energii każdego pasma liczone per bufor audio
  * (`processSample` per próbka, `publishSnapshot` raz na koniec bufora).
+ *
+ * Dodatkowo wykrywa "bity" prostym energy-based onset detection na paśmie basowym (porównanie
+ * chwilowej energii z jej wygładzoną średnią kroczącą, z progiem i minimalnym odstępem między
+ * bitami) — wystarczające do napędzania efektów wizualnych (wybuchy cząsteczek), nie jest to
+ * precyzyjny beat-tracker do wykrywania BPM.
  */
 @Singleton
 class AudioVisualizerAnalyzer @Inject constructor() {
@@ -29,8 +34,12 @@ class AudioVisualizerAnalyzer @Inject constructor() {
     private var sampleCount = 0
     private var configuredSampleRateHz = -1
 
-    private val _magnitudes = MutableStateFlow(FloatArray(BAND_COUNT))
-    val magnitudes: StateFlow<FloatArray> = _magnitudes
+    private var bassEnergyEma = 0f
+    private var lastBeatAtMs = 0L
+    private var beatCounter = 0L
+
+    private val _frame = MutableStateFlow(VisualizerFrame(FloatArray(BAND_COUNT)))
+    val frame: StateFlow<VisualizerFrame> = _frame
 
     fun processSample(monoSample: Float, sampleRateHz: Int) {
         ensureConfigured(sampleRateHz)
@@ -43,21 +52,58 @@ class AudioVisualizerAnalyzer @Inject constructor() {
 
     fun publishSnapshot() {
         if (sampleCount == 0) return
-        val result = FloatArray(bandFilters.size)
+
+        val rawRms = FloatArray(bandFilters.size)
         for (i in sumSquares.indices) {
-            val rms = sqrt(sumSquares[i] / sampleCount)
-            result[i] = normalize(rms)
+            rawRms[i] = sqrt(sumSquares[i] / sampleCount)
             sumSquares[i] = 0f
         }
         sampleCount = 0
-        _magnitudes.value = result
+
+        val normalized = FloatArray(rawRms.size) { normalize(rawRms[it]) }
+        val bassEnergy = averageRange(normalized, BASS_RANGE)
+        val midEnergy = averageRange(normalized, MID_RANGE)
+        val trebleEnergy = averageRange(normalized, TREBLE_RANGE)
+        val overallEnergy = if (normalized.isEmpty()) 0f else normalized.average().toFloat()
+
+        val rawBassEnergy = averageRange(rawRms, BASS_RANGE)
+        beatCounter = detectBeat(rawBassEnergy, beatCounter)
+
+        _frame.value = VisualizerFrame(
+            bandMagnitudes = normalized,
+            bassEnergy = bassEnergy,
+            midEnergy = midEnergy,
+            trebleEnergy = trebleEnergy,
+            overallEnergy = overallEnergy,
+            beatCount = beatCounter,
+        )
     }
 
-    /** Gdy nic nie gra/EQ nieaktywny — sprowadź słupki do zera zamiast zostawić ostatnią klatkę. */
+    /** Gdy nic nie gra/EQ nieaktywny — sprowadź wizualizację do zera zamiast zostawić ostatnią klatkę. */
     fun reset() {
         sumSquares.fill(0f)
         sampleCount = 0
-        _magnitudes.value = FloatArray(bandFilters.size)
+        bassEnergyEma = 0f
+        _frame.value = VisualizerFrame(FloatArray(bandFilters.size))
+    }
+
+    private fun detectBeat(rawBassEnergy: Float, currentCount: Long): Long {
+        bassEnergyEma = if (bassEnergyEma == 0f) {
+            rawBassEnergy
+        } else {
+            bassEnergyEma * (1f - BEAT_EMA_ALPHA) + rawBassEnergy * BEAT_EMA_ALPHA
+        }
+
+        val now = System.currentTimeMillis()
+        val isLoudEnough = rawBassEnergy > BEAT_MIN_RAW_ENERGY
+        val isSpike = rawBassEnergy > bassEnergyEma * BEAT_THRESHOLD_RATIO
+        val isDebounced = now - lastBeatAtMs > BEAT_MIN_INTERVAL_MS
+
+        if (isLoudEnough && isSpike && isDebounced) {
+            lastBeatAtMs = now
+            return currentCount + 1
+        }
+        return currentCount
     }
 
     private fun ensureConfigured(sampleRateHz: Int) {
@@ -77,6 +123,16 @@ class AudioVisualizerAnalyzer @Inject constructor() {
         return ((db + 50f) / 50f).coerceIn(0f, 1f)
     }
 
+    private fun averageRange(values: FloatArray, range: IntRange): Float {
+        if (values.isEmpty()) return 0f
+        val from = range.first.coerceIn(0, values.lastIndex)
+        val to = range.last.coerceIn(0, values.lastIndex)
+        if (to < from) return 0f
+        var sum = 0f
+        for (i in from..to) sum += values[i]
+        return sum / (to - from + 1)
+    }
+
     private fun logSpacedFrequencies(sampleRateHz: Int): FloatArray {
         val nyquist = sampleRateHz / 2f
         val maxUsable = minOf(MAX_FREQ_HZ, nyquist * 0.9f)
@@ -93,5 +149,15 @@ class AudioVisualizerAnalyzer @Inject constructor() {
         const val BAND_Q = 4f
         const val MIN_FREQ_HZ = 60f
         const val MAX_FREQ_HZ = 12000f
+
+        // Pasma 0-23 rozstawione logarytmicznie 60Hz-12kHz — pierwsze ~6 pasm to z grubsza <250Hz (bas).
+        val BASS_RANGE = 0..5
+        val MID_RANGE = 6..15
+        val TREBLE_RANGE = 16..23
+
+        const val BEAT_EMA_ALPHA = 0.15f
+        const val BEAT_THRESHOLD_RATIO = 1.4f
+        const val BEAT_MIN_RAW_ENERGY = 0.015f
+        const val BEAT_MIN_INTERVAL_MS = 220L
     }
 }

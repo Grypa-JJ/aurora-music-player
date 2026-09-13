@@ -3,6 +3,7 @@ package com.aurora.player.nowplaying
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -14,13 +15,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -46,7 +47,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
-import com.aurora.player.designsystem.components.VisualizerBars
+import com.aurora.player.designsystem.components.AuroraVisualizer
 import com.aurora.player.designsystem.components.sharedElementOrSelf
 import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
@@ -91,7 +92,9 @@ fun NowPlayingScreen(
     )
     val backgroundBrush = Brush.verticalGradient(listOf(backgroundTop, Color(0xFF06060A)))
     var showEqSheet by remember { mutableStateOf(false) }
+    var showVisualizer by remember { mutableStateOf(false) }
     val hazeState = rememberHazeState()
+    val visualizerFrame by viewModel.visualizerFrame.collectAsState()
 
     Column(
         modifier = modifier
@@ -134,16 +137,38 @@ fun NowPlayingScreen(
                 .aspectRatio(1f)
                 .clip(RoundedCornerShape(24.dp))
                 .background(MaterialTheme.colorScheme.surface)
-                .sharedElementOrSelf(sharedTransitionScope, animatedVisibilityScope, albumArtSharedKey),
+                .sharedElementOrSelf(sharedTransitionScope, animatedVisibilityScope, albumArtSharedKey)
+                .clickable { showVisualizer = !showVisualizer },
             contentAlignment = Alignment.Center,
         ) {
-            if (track?.albumArtUri != null) {
-                AsyncImage(
-                    model = track.albumArtUri,
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                )
+            Crossfade(targetState = showVisualizer, label = "albumArtOrVisualizer") { visualizerActive ->
+                if (visualizerActive) {
+                    AuroraVisualizer(
+                        bandMagnitudes = visualizerFrame.bandMagnitudes,
+                        bassEnergy = visualizerFrame.bassEnergy,
+                        overallEnergy = visualizerFrame.overallEnergy,
+                        beatCount = visualizerFrame.beatCount,
+                        accentColor = accentColor,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else if (track?.albumArtUri != null) {
+                    AsyncImage(
+                        model = track.albumArtUri,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
+
+            Icon(
+                imageVector = Icons.Filled.GraphicEq,
+                contentDescription = if (showVisualizer) "Pokaż okładkę" else "Pokaż wizualizer",
+                tint = Color.White.copy(alpha = 0.85f),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(tokens.spacing.m)
+                    .size(22.dp),
+            )
         }
 
         Column(modifier = Modifier.padding(top = tokens.spacing.xl)) {
@@ -159,18 +184,6 @@ fun NowPlayingScreen(
                 style = AuroraTextStyles.Body,
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
                 modifier = Modifier.padding(top = tokens.spacing.xs),
-            )
-        }
-
-        val visualizerMagnitudes by viewModel.visualizerMagnitudes.collectAsState()
-        if (playbackState.isPlaying) {
-            VisualizerBars(
-                magnitudes = visualizerMagnitudes,
-                color = accentColor,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
-                    .padding(top = tokens.spacing.l),
             )
         }
 
