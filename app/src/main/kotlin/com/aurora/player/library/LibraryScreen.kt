@@ -3,6 +3,7 @@ package com.aurora.player.library
 import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +19,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -38,6 +41,7 @@ import com.aurora.player.designsystem.components.MiniPlayerBar
 import com.aurora.player.designsystem.components.TrackListItem
 import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
+import com.aurora.player.domain.model.TrackSource
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import java.util.concurrent.TimeUnit
@@ -59,6 +63,7 @@ fun LibraryScreen(
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
     val playbackState by viewModel.playbackState.collectAsState()
+    val isCloudSignedIn by viewModel.isCloudSignedIn.collectAsState()
     val tokens = LocalAuroraTokens.current
     val hazeState = rememberHazeState()
 
@@ -67,6 +72,10 @@ fun LibraryScreen(
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
     ) { granted -> viewModel.onPermissionResult(granted) }
+
+    val cloudConsentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult(),
+    ) { result -> viewModel.onCloudConsentResult(result.data) }
 
     LaunchedEffect(Unit) {
         val alreadyGranted = ContextCompat.checkSelfPermission(context, audioPermission) ==
@@ -93,18 +102,49 @@ fun LibraryScreen(
                     style = AuroraTextStyles.Headline,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
-                Icon(
-                    imageVector = Icons.Filled.AutoAwesome,
-                    contentDescription = "Genius",
-                    tint = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier
-                        .size(26.dp)
-                        .clickable(onClick = onOpenGeniusMixes),
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = if (isCloudSignedIn) Icons.Filled.Cloud else Icons.Filled.CloudOff,
+                        contentDescription = if (isCloudSignedIn) {
+                            "Chmura połączona (dotknij, żeby się wylogować)"
+                        } else {
+                            "Zaloguj do Google Drive"
+                        },
+                        tint = if (isCloudSignedIn) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f)
+                        },
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clickable {
+                                if (isCloudSignedIn) {
+                                    viewModel.onCloudSignOut()
+                                } else {
+                                    viewModel.onCloudConnectClick { intentSender ->
+                                        cloudConsentLauncher.launch(
+                                            IntentSenderRequest.Builder(intentSender).build(),
+                                        )
+                                    }
+                                }
+                            },
+                    )
+                    Icon(
+                        imageVector = Icons.Filled.AutoAwesome,
+                        contentDescription = "Genius",
+                        tint = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier
+                            .padding(start = tokens.spacing.m)
+                            .size(26.dp)
+                            .clickable(onClick = onOpenGeniusMixes),
+                    )
+                }
             }
 
             when {
-                !uiState.hasPermission -> {
+                // Nie blokuj widoku permission-promptem, jeśli mamy już czym wypełnić listę
+                // (np. same utwory z chmury bez zgody na lokalny storage).
+                !uiState.hasPermission && uiState.allTracks.isEmpty() -> {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -126,7 +166,7 @@ fun LibraryScreen(
                     }
                 }
 
-                uiState.tracks.isEmpty() && !uiState.isLoading -> {
+                uiState.allTracks.isEmpty() && !uiState.isLoading && !uiState.isLoadingCloud -> {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(
                             text = "Nie znaleziono muzyki na urządzeniu.",
@@ -146,7 +186,7 @@ fun LibraryScreen(
                             vertical = tokens.spacing.s,
                         ),
                     ) {
-                        items(uiState.tracks, key = { it.id }) { track ->
+                        items(uiState.allTracks, key = { it.id }) { track ->
                             TrackListItem(
                                 title = track.title,
                                 artist = track.artist,
@@ -155,6 +195,7 @@ fun LibraryScreen(
                                 isCurrentlyPlaying = playbackState.currentTrack?.id == track.id,
                                 onClick = { viewModel.onTrackClick(track) },
                                 onGeniusClick = { viewModel.onGeniusClick(track) },
+                                isCloudTrack = track.source == TrackSource.CLOUD,
                             )
                         }
                     }

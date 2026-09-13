@@ -36,6 +36,22 @@ android {
     buildFeatures {
         compose = true
     }
+
+    // Biblioteki Google API client (google-auth-library-*, transitywne z google-api-client-android
+    // / google-api-services-drive) dublują pliki META-INF między jarami — klasyczny, udokumentowany
+    // problem tych bibliotek na Androidzie, nie coś specyficznego dla tego projektu.
+    packaging {
+        resources {
+            excludes += setOf(
+                "META-INF/INDEX.LIST",
+                "META-INF/DEPENDENCIES",
+                "META-INF/LICENSE",
+                "META-INF/LICENSE.txt",
+                "META-INF/NOTICE",
+                "META-INF/NOTICE.txt",
+            )
+        }
+    }
 }
 
 dependencies {
@@ -69,6 +85,18 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.haze)
     implementation(libs.haze.materials)
+
+    // Biblioteka Google Drive — patrz DESIGN.md, sekcja "Chmura". Sign-in przez
+    // play-services-auth (GoogleSignInClient), pliki przez REST Drive API v3
+    // (natywne "Drive Android API" jest deprecated od Google, patrz komentarz w kodzie).
+    implementation(libs.play.services.auth)
+    implementation(libs.google.http.client.gson)
+    implementation(libs.google.api.client.android) {
+        exclude(group = "org.apache.httpcomponents")
+    }
+    implementation(libs.google.api.services.drive) {
+        exclude(group = "org.apache.httpcomponents")
+    }
 
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)

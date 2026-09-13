@@ -1,7 +1,9 @@
 package com.aurora.player.library
 
+import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aurora.player.cloud.GoogleDriveLibraryRepository
 import com.aurora.player.color.AlbumArtColorExtractor
 import com.aurora.player.color.AlbumArtPalette
 import com.aurora.player.domain.model.EqState
@@ -25,9 +27,14 @@ import javax.inject.Inject
 
 data class LibraryUiState(
     val tracks: List<Track> = emptyList(),
+    val cloudTracks: List<Track> = emptyList(),
     val isLoading: Boolean = false,
+    val isLoadingCloud: Boolean = false,
     val hasPermission: Boolean = false,
-)
+) {
+    /** Biblioteka z urządzenia + z chmury złączona w jedną listę do wyświetlenia. */
+    val allTracks: List<Track> get() = tracks + cloudTracks
+}
 
 @HiltViewModel
 class LibraryViewModel @Inject constructor(
@@ -37,7 +44,11 @@ class LibraryViewModel @Inject constructor(
     val eqRepository: EqRepository,
     private val geniusRepository: GeniusRepository,
     private val visualizerAnalyzer: AudioVisualizerAnalyzer,
+    private val googleDriveLibraryRepository: GoogleDriveLibraryRepository,
 ) : ViewModel() {
+
+    val isCloudSignedIn: StateFlow<Boolean> = googleDriveLibraryRepository.isSignedIn
+    val cloudAccountEmail: StateFlow<String?> = googleDriveLibraryRepository.accountEmail
 
     /** Wizualizer widmowy Now Playing — patrz DESIGN.md, `AudioVisualizerAnalyzer`. */
     val visualizerMagnitudes: StateFlow<FloatArray> = visualizerAnalyzer.magnitudes
@@ -72,6 +83,9 @@ class LibraryViewModel @Inject constructor(
                     }
                 }
         }
+        // Sesja Google potrafi przetrwać restart appki (GoogleSignIn.getLastSignedInAccount) —
+        // jeśli tak, dociągnij bibliotekę z chmury bez czekania na akcję użytkownika.
+        if (isCloudSignedIn.value) refreshCloud()
     }
 
     fun onPermissionResult(granted: Boolean) {
@@ -148,5 +162,43 @@ class LibraryViewModel @Inject constructor(
 
     fun onPlayMix(mix: GeniusMix) {
         playerRepository.playQueue(mix.tracks)
+    }
+
+    // --- Chmura (Google Drive) — patrz DESIGN.md, sekcja "Chmura" ---
+
+    /**
+     * Próbuje połączyć się z Google Drive. Jeśli Google wymaga ekranu zgody, [onNeedsConsent]
+     * dostaje [android.content.IntentSender] do odpalenia przez `ActivityResultLauncher`
+     * (patrz LibraryScreen) — inaczej (już autoryzowany/błąd) biblioteka po prostu się odświeża.
+     */
+    fun onCloudConnectClick(onNeedsConsent: (android.content.IntentSender) -> Unit) {
+        viewModelScope.launch {
+            val intentSender = googleDriveLibraryRepository.connect()
+            if (intentSender != null) {
+                onNeedsConsent(intentSender)
+            } else if (googleDriveLibraryRepository.isSignedIn.value) {
+                refreshCloud()
+            }
+        }
+    }
+
+    /** Wołane z `ActivityResultLauncher` w LibraryScreen po ekranie zgody Google. */
+    fun onCloudConsentResult(data: Intent?) {
+        if (googleDriveLibraryRepository.handleAuthorizationResult(data)) {
+            refreshCloud()
+        }
+    }
+
+    fun refreshCloud() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingCloud = true) }
+            val tracks = googleDriveLibraryRepository.refreshCloudTracks()
+            _uiState.update { it.copy(cloudTracks = tracks, isLoadingCloud = false) }
+        }
+    }
+
+    fun onCloudSignOut() {
+        googleDriveLibraryRepository.signOut()
+        _uiState.update { it.copy(cloudTracks = emptyList()) }
     }
 }

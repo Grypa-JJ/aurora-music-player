@@ -11,4 +11,5 @@ data class Track(
     val durationMs: Long,
     val dateAddedMs: Long,
     val albumArtUri: String?,
+    val source: TrackSource = TrackSource.LOCAL,
 )

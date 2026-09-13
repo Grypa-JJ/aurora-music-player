@@ -2,6 +2,7 @@ package com.aurora.player.playback
 
 import android.content.ComponentName
 import android.content.Context
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.session.MediaController
@@ -97,7 +98,9 @@ class PlayerController @Inject constructor(
                 }
 
                 lastKnownPositionMs = 0L
-                _playbackState.update { it.copy(currentTrack = newTrack ?: it.currentTrack, positionMs = 0L) }
+                _playbackState.update {
+                    it.copy(currentTrack = newTrack ?: it.currentTrack, positionMs = 0L, durationMs = 0L)
+                }
             }
         })
     }
@@ -109,7 +112,10 @@ class PlayerController @Inject constructor(
                 val current = controller
                 if (current == null || !current.isPlaying) break
                 lastKnownPositionMs = current.currentPosition
-                _playbackState.update { it.copy(positionMs = current.currentPosition) }
+                val liveDurationMs = current.duration.takeIf { it != C.TIME_UNSET && it > 0L } ?: 0L
+                _playbackState.update {
+                    it.copy(positionMs = current.currentPosition, durationMs = liveDurationMs)
+                }
                 delay(300)
             }
         }

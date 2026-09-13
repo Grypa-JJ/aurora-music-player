@@ -2,10 +2,14 @@ package com.aurora.player.playback
 
 import android.app.PendingIntent
 import android.content.Intent
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.aurora.player.MainActivity
+import com.aurora.player.cloud.GoogleDriveDataSourceFactory
+import com.aurora.player.domain.repository.CloudLibraryRepository
 import com.aurora.player.domain.repository.EqRepository
 import com.aurora.player.eq.EqualizerAudioProcessor
 import com.aurora.player.eq.EqualizerRenderersFactory
@@ -31,6 +35,9 @@ class PlaybackService : MediaSessionService() {
     @Inject
     lateinit var visualizerAnalyzer: AudioVisualizerAnalyzer
 
+    @Inject
+    lateinit var cloudLibraryRepository: CloudLibraryRepository
+
     private var mediaSession: MediaSession? = null
 
     override fun onCreate() {
@@ -38,7 +45,19 @@ class PlaybackService : MediaSessionService() {
 
         val equalizerAudioProcessor = EqualizerAudioProcessor(eqRepository, visualizerAnalyzer)
         val renderersFactory = EqualizerRenderersFactory(this, equalizerAudioProcessor)
-        val player = ExoPlayer.Builder(this, renderersFactory).build()
+
+        // Utwory z Google Drive (https://) idą przez GoogleDriveDataSourceFactory (dokłada
+        // token OAuth); lokalne (content://) obsługuje sam DefaultDataSource.Factory — patrz
+        // DESIGN.md, sekcja "Chmura".
+        val cloudHttpDataSourceFactory = GoogleDriveDataSourceFactory {
+            cloudLibraryRepository.currentAccessTokenBlocking()
+        }
+        val dataSourceFactory = DefaultDataSource.Factory(this, cloudHttpDataSourceFactory)
+        val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
+
+        val player = ExoPlayer.Builder(this, renderersFactory)
+            .setMediaSourceFactory(mediaSourceFactory)
+            .build()
 
         val sessionActivityIntent = PendingIntent.getActivity(
             this,

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -38,6 +39,7 @@ fun TrackListItem(
     isCurrentlyPlaying: Boolean,
     onClick: () -> Unit,
     onGeniusClick: (() -> Unit)? = null,
+    isCloudTrack: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val tokens = LocalAuroraTokens.current
@@ -93,6 +95,17 @@ fun TrackListItem(
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+            )
+        }
+
+        if (isCloudTrack) {
+            Icon(
+                imageVector = Icons.Filled.Cloud,
+                contentDescription = "Z Google Drive",
+                tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.35f),
+                modifier = Modifier
+                    .padding(end = tokens.spacing.xs)
+                    .size(14.dp),
             )
         }
 

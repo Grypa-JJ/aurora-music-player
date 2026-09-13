@@ -165,7 +165,9 @@ fun NowPlayingScreen(
             )
         }
 
-        val durationMs = track?.durationMs ?: 0L
+        // Dla utworów z chmury (Google Drive) długość nie jest znana z metadanych z góry —
+        // playbackState.durationMs (z samego playera) ma pierwszeństwo, gdy już jest dostępna.
+        val durationMs = playbackState.durationMs.takeIf { it > 0L } ?: track?.durationMs ?: 0L
         var isDragging by remember { mutableStateOf(false) }
         var dragPositionMs by remember { mutableStateOf(0f) }
         val sliderPosition = if (isDragging) dragPositionMs else playbackState.positionMs.toFloat()
