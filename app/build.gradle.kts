@@ -67,6 +67,8 @@ dependencies {
     implementation("androidx.compose.animation:animation")
 
     implementation(libs.coil.compose)
+    implementation(libs.haze)
+    implementation(libs.haze.materials)
 
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)

@@ -46,6 +46,8 @@ import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
 import com.aurora.player.eq.EqualizerSheet
 import com.aurora.player.library.LibraryViewModel
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import java.util.concurrent.TimeUnit
 
 /**
@@ -79,11 +81,13 @@ fun NowPlayingScreen(
     )
     val backgroundBrush = Brush.verticalGradient(listOf(backgroundTop, Color(0xFF06060A)))
     var showEqSheet by remember { mutableStateOf(false) }
+    val hazeState = rememberHazeState()
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(backgroundBrush)
+            .hazeSource(state = hazeState)
             .padding(tokens.spacing.m),
     ) {
         Row(
@@ -110,7 +114,7 @@ fun NowPlayingScreen(
         }
 
         if (showEqSheet) {
-            EqualizerSheet(viewModel = viewModel, onDismiss = { showEqSheet = false })
+            EqualizerSheet(viewModel = viewModel, onDismiss = { showEqSheet = false }, hazeState = hazeState)
         }
 
         Box(

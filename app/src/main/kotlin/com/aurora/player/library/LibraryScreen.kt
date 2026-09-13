@@ -38,6 +38,8 @@ import com.aurora.player.designsystem.components.MiniPlayerBar
 import com.aurora.player.designsystem.components.TrackListItem
 import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import java.util.concurrent.TimeUnit
 
 private val audioPermission: String
@@ -58,6 +60,7 @@ fun LibraryScreen(
     val uiState by viewModel.uiState.collectAsState()
     val playbackState by viewModel.playbackState.collectAsState()
     val tokens = LocalAuroraTokens.current
+    val hazeState = rememberHazeState()
 
     var permissionRequested by remember { mutableStateOf(false) }
 
@@ -135,7 +138,9 @@ fun LibraryScreen(
 
                 else -> {
                     LazyColumn(
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .hazeSource(state = hazeState),
                         contentPadding = PaddingValues(
                             horizontal = tokens.spacing.s,
                             vertical = tokens.spacing.s,
@@ -165,6 +170,7 @@ fun LibraryScreen(
                 isPlaying = playbackState.isPlaying,
                 onTogglePlayPause = viewModel::onTogglePlayPause,
                 onClick = onOpenNowPlaying,
+                hazeState = hazeState,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(tokens.spacing.m),

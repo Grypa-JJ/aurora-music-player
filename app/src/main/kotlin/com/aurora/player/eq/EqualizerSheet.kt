@@ -25,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.aurora.player.designsystem.components.VerticalSlider
@@ -33,26 +34,39 @@ import com.aurora.player.designsystem.theme.LocalAuroraTokens
 import com.aurora.player.domain.model.EqDefaults
 import com.aurora.player.domain.model.EqPresets
 import com.aurora.player.library.LibraryViewModel
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeEffect
+import dev.chrisbanes.haze.materials.HazeMaterials
 
 /**
  * Arkusz equalizera — patrz DESIGN.md sekcja 4.3. Etap 2: siatka suwaków + presety + on/off,
  * bez trybu "malowania" krzywej (Canvas+Bezier) i bez sekcji Bass Boost/Widener/Preamp osobno —
  * to zostawione na później, bo silnik DSP (na razie) realizuje tylko 10-pasmowy EQ.
+ * [hazeState] opcjonalny (patrz DESIGN.md 2.4/4.3) — blur tła Now Playing pod spodem zamiast
+ * płaskiego koloru; wzorzec `containerColor = Transparent` + `hazeEffect` na modifierze sheeta
+ * zweryfikowany na oficjalnym przykładzie biblioteki Haze (ScaffoldSample, LargeTopAppBar).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EqualizerSheet(
     viewModel: LibraryViewModel,
     onDismiss: () -> Unit,
+    hazeState: HazeState? = null,
 ) {
     val eqState by viewModel.eqState.collectAsState()
     val tokens = LocalAuroraTokens.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val surfaceColor = MaterialTheme.colorScheme.surface
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = if (hazeState != null) Color.Transparent else surfaceColor,
+        modifier = if (hazeState != null) {
+            Modifier.hazeEffect(state = hazeState, style = HazeMaterials.regular(surfaceColor))
+        } else {
+            Modifier
+        },
     ) {
         Column(modifier = Modifier.padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s)) {
             Row(

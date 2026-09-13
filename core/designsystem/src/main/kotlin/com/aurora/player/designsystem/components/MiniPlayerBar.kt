@@ -26,8 +26,16 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeEffect
+import dev.chrisbanes.haze.materials.HazeMaterials
 
-/** Pływający mini-player nad dolną nawigacją — patrz DESIGN.md sekcja 3.1. */
+/**
+ * Pływający mini-player nad dolną nawigacją — patrz DESIGN.md sekcja 3.1.
+ * [hazeState] opcjonalny: gdy podany (wołający ekran oznaczył scrollowaną treść pod spodem
+ * przez `Modifier.hazeSource`), tło jest prawdziwym blur-em (Haze) zamiast płaskiego koloru —
+ * degradacja na starszych urządzeniach jest wbudowana w bibliotekę, nic nie trzeba robić ręcznie.
+ */
 @Composable
 fun MiniPlayerBar(
     title: String,
@@ -37,14 +45,22 @@ fun MiniPlayerBar(
     onTogglePlayPause: () -> Unit,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    hazeState: HazeState? = null,
 ) {
     val tokens = LocalAuroraTokens.current
+    val surfaceColor = MaterialTheme.colorScheme.surface
 
     Row(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(24.dp))
-            .background(MaterialTheme.colorScheme.surface)
+            .then(
+                if (hazeState != null) {
+                    Modifier.hazeEffect(state = hazeState, style = HazeMaterials.thin(surfaceColor))
+                } else {
+                    Modifier.background(surfaceColor)
+                },
+            )
             .clickable(onClick = onClick)
             .padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s),
         verticalAlignment = Alignment.CenterVertically,
