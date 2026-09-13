@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- UI jest w 100% w Compose (AuroraTheme) — ten motyw XML służy tylko jako
+         okno startowe systemu (splash/status bar) przed pierwszym composition pass. -->
+    <style name="Theme.Aurora" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/aurora_background</item>
+        <item name="android:statusBarColor">@color/aurora_background</item>
+        <item name="android:navigationBarColor">@color/aurora_background</item>
+    </style>
+</resources>
