@@ -6,19 +6,34 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.aurora.player.MainActivity
+import com.aurora.player.domain.repository.EqRepository
+import com.aurora.player.eq.EqualizerAudioProcessor
+import com.aurora.player.eq.EqualizerRenderersFactory
+import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 /**
  * Odtwarzanie w tle + powiadomienie z kontrolkami (MediaSession) — patrz DESIGN.md etap 1.
  * UI (PlayerController) łączy się z tym serwisem przez MediaController, nie trzyma
  * własnego ExoPlayera — dzięki temu muzyka gra dalej po zamknięciu ekranu/aplikacji.
+ *
+ * @AndroidEntryPoint, bo silnik EQ ([EqualizerAudioProcessor]) musi czytać ten sam
+ * [EqRepository] (Hilt singleton) co ekran equalizera — patrz DESIGN.md sekcja 4.
  */
+@AndroidEntryPoint
 class PlaybackService : MediaSessionService() {
+
+    @Inject
+    lateinit var eqRepository: EqRepository
 
     private var mediaSession: MediaSession? = null
 
     override fun onCreate() {
         super.onCreate()
-        val player = ExoPlayer.Builder(this).build()
+
+        val equalizerAudioProcessor = EqualizerAudioProcessor(eqRepository)
+        val renderersFactory = EqualizerRenderersFactory(this, equalizerAudioProcessor)
+        val player = ExoPlayer.Builder(this, renderersFactory).build()
 
         val sessionActivityIntent = PendingIntent.getActivity(
             this,

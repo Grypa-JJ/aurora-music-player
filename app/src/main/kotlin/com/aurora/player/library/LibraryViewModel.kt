@@ -4,8 +4,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aurora.player.color.AlbumArtColorExtractor
 import com.aurora.player.color.AlbumArtPalette
+import com.aurora.player.domain.model.EqState
 import com.aurora.player.domain.model.PlaybackState
 import com.aurora.player.domain.model.Track
+import com.aurora.player.domain.repository.EqRepository
 import com.aurora.player.domain.repository.PlayerRepository
 import com.aurora.player.domain.usecase.GetTracksUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -29,12 +31,14 @@ class LibraryViewModel @Inject constructor(
     private val getTracksUseCase: GetTracksUseCase,
     private val colorExtractor: AlbumArtColorExtractor,
     val playerRepository: PlayerRepository,
+    val eqRepository: EqRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(LibraryUiState())
     val uiState: StateFlow<LibraryUiState> = _uiState.asStateFlow()
 
     val playbackState: StateFlow<PlaybackState> = playerRepository.playbackState
+    val eqState: StateFlow<EqState> = eqRepository.eqState
 
     private val _albumArtPalette = MutableStateFlow(AlbumArtPalette())
     val albumArtPalette: StateFlow<AlbumArtPalette> = _albumArtPalette.asStateFlow()
@@ -80,5 +84,21 @@ class LibraryViewModel @Inject constructor(
 
     fun onSeek(positionMs: Long) {
         playerRepository.seekTo(positionMs)
+    }
+
+    fun onEqSetEnabled(enabled: Boolean) {
+        eqRepository.setEnabled(enabled)
+    }
+
+    fun onEqSetBandGain(bandIndex: Int, gainDb: Float) {
+        eqRepository.setBandGain(bandIndex, gainDb)
+    }
+
+    fun onEqApplyPreset(presetName: String) {
+        eqRepository.applyPreset(presetName)
+    }
+
+    fun onEqReset() {
+        eqRepository.reset()
     }
 }

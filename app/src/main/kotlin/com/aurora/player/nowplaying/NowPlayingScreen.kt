@@ -15,10 +15,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -40,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
+import com.aurora.player.eq.EqualizerSheet
 import com.aurora.player.library.LibraryViewModel
 import java.util.concurrent.TimeUnit
 
@@ -73,6 +76,7 @@ fun NowPlayingScreen(
         label = "nowPlayingAccent",
     )
     val backgroundBrush = Brush.verticalGradient(listOf(backgroundTop, Color(0xFF06060A)))
+    var showEqSheet by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
@@ -92,6 +96,19 @@ fun NowPlayingScreen(
                     .size(40.dp)
                     .clickable(onClick = onBack),
             )
+            Spacer(modifier = Modifier.weight(1f))
+            Icon(
+                imageVector = Icons.Filled.Tune,
+                contentDescription = "Equalizer",
+                tint = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier
+                    .size(28.dp)
+                    .clickable { showEqSheet = true },
+            )
+        }
+
+        if (showEqSheet) {
+            EqualizerSheet(viewModel = viewModel, onDismiss = { showEqSheet = false })
         }
 
         Box(
