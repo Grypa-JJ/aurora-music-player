@@ -500,7 +500,12 @@ navigation/
   - Pobrany z oficjalnego wydania `rsms/inter` v4.1 (GitHub Releases) — ta wersja dystrybuuje Inter wyłącznie jako **variable font** (jeden plik `InterVariable.ttf`, 879KB), nie osobne pliki na wagę jak zakładał wcześniejszy komentarz TODO. Plik w `core/designsystem/src/main/res/font/inter_variable.ttf`, licencja SIL OFL w `licenses/Inter-LICENSE.txt`.
   - `AuroraFontFamily` (`Typography.kt`) buduje 3 wagi (400/500/600) z jednego pliku przez `Font(..., variationSettings = FontVariation.Settings(FontVariation.weight(w)))` (`@OptIn(ExperimentalTextApi::class)`) — nowocześniejsze i lżejsze niż trzy osobne pliki statyczne.
   - `.gitattributes` dodany (`*.ttf binary` itd.), żeby git/CRLF nigdy nie tknął plików binarnych.
-- [ ] Etap 4 (część 2c, zostało): shared element transition mini-player↔Now Playing (wymaga `SharedTransitionLayout`, eksperymentalne API Compose 1.7+, wątek nawigacji trzeba przepleść przez `AnimatedContentScope`).
+- [x] Etap 5: wizualizer widmowy (jak stare wizualizacje Windows Media Player), dodany na życzenie użytkownika.
+  - **Świadomie NIE systemowy `android.media.audiofx.Visualizer`** — jego użycie wymaga uprawnienia `RECORD_AUDIO` nawet dla capture z własnej sesji audio (zweryfikowane w źródle AOSP `Visualizer.java`: "the use of the visualizer requires the permission android.permission.RECORD_AUDIO"), co byłoby mylące dla użytkownika (po co odtwarzaczowi mikrofon) i niepotrzebne, skoro nasz własny `EqualizerAudioProcessor` i tak już widzi każdą próbkę PCM.
+  - `BiquadFilter.updateBandpassCoefficients()` — wariant BPF "constant 0 dB peak gain" z RBJ Audio Cookbook, wzór zweryfikowany 1:1 z tekstem cookbooka tak samo jak peakingEQ.
+  - `AudioVisualizerAnalyzer` (nowy Hilt singleton, `app/visualizer/`) — 24 pasma BPF rozstawione logarytmicznie 60Hz–12kHz, RMS energii per pasmo liczone raz na bufor audio (po miksie do mono, PO przetworzeniu EQ — wizualizuje dokładnie to, co słychać), kompresja logarytmiczna (dB) żeby ciche fragmenty też było widać. `EqualizerAudioProcessor` woła go w tej samej pętli co filtrowanie EQ — zero dodatkowego przejścia po danych PCM.
+  - `VisualizerBars` (core:designsystem, Canvas + `animateFloatAsState` per słupek ze sprężyną) — pasek 24 słupków w kolorze akcentu (Vibrant z okładki) pod tytułem utworu na Now Playing, widoczny tylko podczas odtwarzania.
+- [ ] Etap 5 (zostało): shared element transition mini-player↔Now Playing (wymaga `SharedTransitionLayout`, eksperymentalne API Compose 1.7+, wątek nawigacji trzeba przepleść przez `AnimatedContentScope`).
 
 ### Jak zbudować / uruchomić
 

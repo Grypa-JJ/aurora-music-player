@@ -9,6 +9,7 @@ import com.aurora.player.MainActivity
 import com.aurora.player.domain.repository.EqRepository
 import com.aurora.player.eq.EqualizerAudioProcessor
 import com.aurora.player.eq.EqualizerRenderersFactory
+import com.aurora.player.visualizer.AudioVisualizerAnalyzer
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
@@ -18,7 +19,8 @@ import javax.inject.Inject
  * własnego ExoPlayera — dzięki temu muzyka gra dalej po zamknięciu ekranu/aplikacji.
  *
  * @AndroidEntryPoint, bo silnik EQ ([EqualizerAudioProcessor]) musi czytać ten sam
- * [EqRepository] (Hilt singleton) co ekran equalizera — patrz DESIGN.md sekcja 4.
+ * [EqRepository] (Hilt singleton) co ekran equalizera — patrz DESIGN.md sekcja 4. Ten sam
+ * mechanizm zasila [AudioVisualizerAnalyzer] danymi do wizualizera widmowego.
  */
 @AndroidEntryPoint
 class PlaybackService : MediaSessionService() {
@@ -26,12 +28,15 @@ class PlaybackService : MediaSessionService() {
     @Inject
     lateinit var eqRepository: EqRepository
 
+    @Inject
+    lateinit var visualizerAnalyzer: AudioVisualizerAnalyzer
+
     private var mediaSession: MediaSession? = null
 
     override fun onCreate() {
         super.onCreate()
 
-        val equalizerAudioProcessor = EqualizerAudioProcessor(eqRepository)
+        val equalizerAudioProcessor = EqualizerAudioProcessor(eqRepository, visualizerAnalyzer)
         val renderersFactory = EqualizerRenderersFactory(this, equalizerAudioProcessor)
         val player = ExoPlayer.Builder(this, renderersFactory).build()
 

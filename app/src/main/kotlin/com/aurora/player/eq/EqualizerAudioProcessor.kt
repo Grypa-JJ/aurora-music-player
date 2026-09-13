@@ -6,6 +6,7 @@ import androidx.media3.common.audio.BaseAudioProcessor
 import com.aurora.player.domain.model.EqDefaults
 import com.aurora.player.domain.model.EqState
 import com.aurora.player.domain.repository.EqRepository
+import com.aurora.player.visualizer.AudioVisualizerAnalyzer
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -17,9 +18,14 @@ import java.nio.ByteOrder
  *
  * Czyta [EqRepository.eqState] bezpośrednio na wątku audio przy każdym buforze — StateFlow.value
  * to zwykły odczyt pola (bez blokowania), więc jest to bezpieczne i tanie w gorącej pętli.
+ *
+ * Przy okazji zasila [AudioVisualizerAnalyzer] próbką zmiksowaną do mono (po EQ, czyli dokładnie
+ * to, co faktycznie słychać) — jeden przebieg po buforze robi obie rzeczy naraz, więc wizualizer
+ * nie kosztuje osobnego przejścia po danych PCM.
  */
 class EqualizerAudioProcessor(
     private val eqRepository: EqRepository,
+    private val visualizerAnalyzer: AudioVisualizerAnalyzer,
 ) : BaseAudioProcessor() {
 
     // [kanał][pasmo]
@@ -63,31 +69,48 @@ class EqualizerAudioProcessor(
         val state = eqRepository.eqState.value
         val remaining = inputBuffer.remaining()
         val output = replaceOutputBuffer(remaining)
+        val channelCount = channelFilters.size
+        val sampleRateHz = inputAudioFormat.sampleRate
 
-        if (!state.enabled || channelFilters.isEmpty()) {
-            if (appliedEnabled) resetFilterHistory()
-            appliedEnabled = false
+        if (channelCount == 0) {
+            // onConfigure jeszcze nie ustawił filtrów — przepuść bez zmian, nic więcej się nie da zrobić.
             output.put(inputBuffer)
             output.flip()
             return
         }
-        appliedEnabled = true
 
-        applyCoefficients(inputAudioFormat.sampleRate, state)
+        val eqEnabled = state.enabled
+        if (eqEnabled) {
+            applyCoefficients(sampleRateHz, state)
+        } else if (appliedEnabled) {
+            resetFilterHistory()
+        }
+        appliedEnabled = eqEnabled
 
         val inputShorts = inputBuffer.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
         val outputShorts = output.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
-        val channelCount = channelFilters.size
+
         var channel = 0
+        var frameSum = 0f
         while (inputShorts.hasRemaining()) {
             var sample = inputShorts.get() / SHORT_SCALE
-            for (band in channelFilters[channel]) {
-                sample = band.process(sample)
+            if (eqEnabled) {
+                for (band in channelFilters[channel]) {
+                    sample = band.process(sample)
+                }
             }
             val clamped = sample.coerceIn(-1f, 1f)
             outputShorts.put((clamped * SHORT_SCALE).toInt().toShort())
-            channel = (channel + 1) % channelCount
+
+            frameSum += clamped
+            channel++
+            if (channel >= channelCount) {
+                visualizerAnalyzer.processSample(frameSum / channelCount, sampleRateHz)
+                frameSum = 0f
+                channel = 0
+            }
         }
+        visualizerAnalyzer.publishSnapshot()
 
         inputBuffer.position(inputBuffer.limit())
         output.position(outputShorts.position() * 2)
@@ -103,6 +126,7 @@ class EqualizerAudioProcessor(
     override fun onReset() {
         channelFilters = emptyArray()
         appliedBandGains = emptyList()
+        visualizerAnalyzer.reset()
     }
 
     private companion object {

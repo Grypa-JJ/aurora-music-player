@@ -12,6 +12,7 @@ import com.aurora.player.domain.repository.EqRepository
 import com.aurora.player.domain.repository.GeniusRepository
 import com.aurora.player.domain.repository.PlayerRepository
 import com.aurora.player.domain.usecase.GetTracksUseCase
+import com.aurora.player.visualizer.AudioVisualizerAnalyzer
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -35,7 +36,11 @@ class LibraryViewModel @Inject constructor(
     val playerRepository: PlayerRepository,
     val eqRepository: EqRepository,
     private val geniusRepository: GeniusRepository,
+    private val visualizerAnalyzer: AudioVisualizerAnalyzer,
 ) : ViewModel() {
+
+    /** Wizualizer widmowy Now Playing — patrz DESIGN.md, `AudioVisualizerAnalyzer`. */
+    val visualizerMagnitudes: StateFlow<FloatArray> = visualizerAnalyzer.magnitudes
 
     private val _uiState = MutableStateFlow(LibraryUiState())
     val uiState: StateFlow<LibraryUiState> = _uiState.asStateFlow()

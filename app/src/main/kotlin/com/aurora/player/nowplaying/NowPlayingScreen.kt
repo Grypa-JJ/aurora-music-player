@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -42,6 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import com.aurora.player.designsystem.components.VisualizerBars
 import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
 import com.aurora.player.eq.EqualizerSheet
@@ -148,6 +150,18 @@ fun NowPlayingScreen(
                 style = AuroraTextStyles.Body,
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
                 modifier = Modifier.padding(top = tokens.spacing.xs),
+            )
+        }
+
+        val visualizerMagnitudes by viewModel.visualizerMagnitudes.collectAsState()
+        if (playbackState.isPlaying) {
+            VisualizerBars(
+                magnitudes = visualizerMagnitudes,
+                color = accentColor,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .padding(top = tokens.spacing.l),
             )
         }
 

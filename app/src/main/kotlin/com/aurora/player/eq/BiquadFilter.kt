@@ -51,6 +51,25 @@ class BiquadFilter {
         a2 = (1f - alpha / a) / a0
     }
 
+    /**
+     * BPF "constant 0 dB peak gain" wg RBJ Audio Cookbook — używane przez wizualizer widma
+     * (patrz DESIGN.md, `AudioVisualizerAnalyzer`), nie przez equalizer. Formuła zweryfikowana
+     * 1:1 z tekstem cookbooka tak samo jak peakingEQ w [updateCoefficients].
+     */
+    fun updateBandpassCoefficients(sampleRateHz: Float, centerFreqHz: Float, q: Float) {
+        val omega = 2f * PI.toFloat() * (centerFreqHz / sampleRateHz).coerceIn(0.0001f, 0.4999f)
+        val sinOmega = sin(omega)
+        val cosOmega = cos(omega)
+        val alpha = sinOmega / (2f * q)
+
+        val a0 = 1f + alpha
+        b0 = alpha / a0
+        b1 = 0f
+        b2 = -alpha / a0
+        a1 = (-2f * cosOmega) / a0
+        a2 = (1f - alpha) / a0
+    }
+
     fun process(input: Float): Float {
         val output = b0 * input + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
         x2 = x1
