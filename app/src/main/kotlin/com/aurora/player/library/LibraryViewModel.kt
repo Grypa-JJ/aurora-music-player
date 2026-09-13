@@ -8,6 +8,7 @@ import com.aurora.player.domain.model.EqState
 import com.aurora.player.domain.model.PlaybackState
 import com.aurora.player.domain.model.Track
 import com.aurora.player.domain.repository.EqRepository
+import com.aurora.player.domain.repository.GeniusRepository
 import com.aurora.player.domain.repository.PlayerRepository
 import com.aurora.player.domain.usecase.GetTracksUseCase
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -32,6 +33,7 @@ class LibraryViewModel @Inject constructor(
     private val colorExtractor: AlbumArtColorExtractor,
     val playerRepository: PlayerRepository,
     val eqRepository: EqRepository,
+    private val geniusRepository: GeniusRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(LibraryUiState())
@@ -42,6 +44,9 @@ class LibraryViewModel @Inject constructor(
 
     private val _albumArtPalette = MutableStateFlow(AlbumArtPalette())
     val albumArtPalette: StateFlow<AlbumArtPalette> = _albumArtPalette.asStateFlow()
+
+    private val _isGeneratingMix = MutableStateFlow(false)
+    val isGeneratingMix: StateFlow<Boolean> = _isGeneratingMix.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -74,7 +79,7 @@ class LibraryViewModel @Inject constructor(
         if (playbackState.value.currentTrack?.id == track.id) {
             playerRepository.togglePlayPause()
         } else {
-            playerRepository.play(track)
+            playerRepository.playQueue(listOf(track))
         }
     }
 
@@ -84,6 +89,24 @@ class LibraryViewModel @Inject constructor(
 
     fun onSeek(positionMs: Long) {
         playerRepository.seekTo(positionMs)
+    }
+
+    fun onSkipNext() {
+        playerRepository.skipToNext()
+    }
+
+    fun onSkipPrevious() {
+        playerRepository.skipToPrevious()
+    }
+
+    /** Instant Mix z utworu-ziarna — patrz DESIGN.md sekcja 5.3. Seed gra jako pierwszy. */
+    fun onGeniusClick(seedTrack: Track) {
+        viewModelScope.launch {
+            _isGeneratingMix.value = true
+            val mix = geniusRepository.generateInstantMix(seedTrack.id)
+            _isGeneratingMix.value = false
+            playerRepository.playQueue(listOf(seedTrack) + mix)
+        }
     }
 
     fun onEqSetEnabled(enabled: Boolean) {

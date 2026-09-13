@@ -20,6 +20,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -184,14 +186,25 @@ fun NowPlayingScreen(
             }
         }
 
-        Box(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = tokens.spacing.l),
-            contentAlignment = Alignment.Center,
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
+            Icon(
+                imageVector = Icons.Filled.SkipPrevious,
+                contentDescription = "Poprzedni",
+                tint = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier
+                    .size(28.dp)
+                    .clickable(onClick = viewModel::onSkipPrevious),
+            )
+
             Box(
                 modifier = Modifier
+                    .padding(horizontal = tokens.spacing.xl)
                     .size(76.dp)
                     .clip(CircleShape)
                     .background(accentColor)
@@ -205,6 +218,15 @@ fun NowPlayingScreen(
                     modifier = Modifier.size(36.dp),
                 )
             }
+
+            Icon(
+                imageVector = Icons.Filled.SkipNext,
+                contentDescription = "Następny",
+                tint = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier
+                    .size(28.dp)
+                    .clickable(onClick = viewModel::onSkipNext),
+            )
         }
     }
 }

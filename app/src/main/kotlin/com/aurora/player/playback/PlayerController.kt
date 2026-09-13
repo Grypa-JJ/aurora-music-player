@@ -9,6 +9,7 @@ import androidx.media3.session.SessionToken
 import com.aurora.player.di.ApplicationScope
 import com.aurora.player.domain.model.PlaybackState
 import com.aurora.player.domain.model.Track
+import com.aurora.player.domain.repository.PlaybackHistoryRepository
 import com.aurora.player.domain.repository.PlayerRepository
 import com.google.common.util.concurrent.MoreExecutors
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -28,19 +29,28 @@ import javax.inject.Singleton
  * [MediaController] połączony z [PlaybackService] (MediaSessionService). Dzięki temu
  * odtwarzanie przeżywa zamknięcie ekranu i ma powiadomienie/kontrolki systemowe za darmo.
  * Patrz DESIGN.md etap 1.
+ *
+ * Etap 3: prawdziwa kolejka (nie tylko jeden utwór na raz) — potrzebna do Instant Mix z Genius.
+ * Każde przejście między utworami (naturalny koniec, next/prev, wybór nowego utworu z listy)
+ * przechodzi przez [Player.Listener.onMediaItemTransition] i zgłasza zakończone odtworzenie
+ * do [PlaybackHistoryRepository] — to zamyka pętlę uczenia Genius (DESIGN.md sekcja 5.4).
  */
 @Singleton
 class PlayerController @Inject constructor(
     @ApplicationContext private val context: Context,
     @ApplicationScope private val scope: CoroutineScope,
+    private val playbackHistoryRepository: PlaybackHistoryRepository,
 ) : PlayerRepository {
 
     private val _playbackState = MutableStateFlow(PlaybackState())
     override val playbackState: StateFlow<PlaybackState> = _playbackState
 
     private var controller: MediaController? = null
-    private var pendingTrack: Track? = null
+    private var pendingQueue: Pair<List<Track>, Int>? = null
     private var positionTickerJob: Job? = null
+
+    private var currentQueue: List<Track> = emptyList()
+    private var lastKnownPositionMs: Long = 0L
 
     init {
         val sessionToken = SessionToken(context, ComponentName(context, PlaybackService::class.java))
@@ -50,8 +60,8 @@ class PlayerController @Inject constructor(
                 val mediaController = future.get()
                 controller = mediaController
                 attachListener(mediaController)
-                pendingTrack?.let { play(it) }
-                pendingTrack = null
+                pendingQueue?.let { (tracks, startIndex) -> playQueue(tracks, startIndex) }
+                pendingQueue = null
             },
             MoreExecutors.directExecutor(),
         )
@@ -63,6 +73,26 @@ class PlayerController @Inject constructor(
                 _playbackState.update { it.copy(isPlaying = isPlaying) }
                 if (isPlaying) startPositionTicker() else positionTickerJob?.cancel()
             }
+
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                val previousTrack = _playbackState.value.currentTrack
+                if (previousTrack != null) {
+                    val forcedCompleted = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO
+                    val playedMs = if (forcedCompleted) previousTrack.durationMs else lastKnownPositionMs
+                    scope.launch {
+                        playbackHistoryRepository.recordPlaybackEnded(
+                            trackId = previousTrack.id,
+                            playedMs = playedMs,
+                            durationMs = previousTrack.durationMs,
+                        )
+                    }
+                }
+
+                val uri = mediaItem?.localConfiguration?.uri?.toString()
+                val newTrack = currentQueue.find { it.uri == uri }
+                lastKnownPositionMs = 0L
+                _playbackState.update { it.copy(currentTrack = newTrack ?: it.currentTrack, positionMs = 0L) }
+            }
         })
     }
 
@@ -72,22 +102,24 @@ class PlayerController @Inject constructor(
             while (isActive) {
                 val current = controller
                 if (current == null || !current.isPlaying) break
+                lastKnownPositionMs = current.currentPosition
                 _playbackState.update { it.copy(positionMs = current.currentPosition) }
                 delay(300)
             }
         }
     }
 
-    override fun play(track: Track) {
+    override fun playQueue(tracks: List<Track>, startIndex: Int) {
+        if (tracks.isEmpty()) return
         val mediaController = controller
         if (mediaController == null) {
-            pendingTrack = track
+            pendingQueue = tracks to startIndex
             return
         }
-        mediaController.setMediaItem(MediaItem.fromUri(track.uri))
+        currentQueue = tracks
+        mediaController.setMediaItems(tracks.map { MediaItem.fromUri(it.uri) }, startIndex, 0L)
         mediaController.prepare()
         mediaController.play()
-        _playbackState.update { it.copy(currentTrack = track, isPlaying = true, positionMs = 0L) }
         startPositionTicker()
     }
 
@@ -99,5 +131,13 @@ class PlayerController @Inject constructor(
     override fun seekTo(positionMs: Long) {
         controller?.seekTo(positionMs)
         _playbackState.update { it.copy(positionMs = positionMs) }
+    }
+
+    override fun skipToNext() {
+        controller?.seekToNextMediaItem()
+    }
+
+    override fun skipToPrevious() {
+        controller?.seekToPreviousMediaItem()
     }
 }

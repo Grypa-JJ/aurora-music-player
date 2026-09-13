@@ -129,6 +129,7 @@ fun LibraryScreen(
                                 durationLabel = formatDuration(track.durationMs),
                                 isCurrentlyPlaying = playbackState.currentTrack?.id == track.id,
                                 onClick = { viewModel.onTrackClick(track) },
+                                onGeniusClick = { viewModel.onGeniusClick(track) },
                             )
                         }
                     }

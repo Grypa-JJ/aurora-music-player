@@ -9,6 +9,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -34,6 +37,7 @@ fun TrackListItem(
     durationLabel: String,
     isCurrentlyPlaying: Boolean,
     onClick: () -> Unit,
+    onGeniusClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val tokens = LocalAuroraTokens.current
@@ -97,5 +101,17 @@ fun TrackListItem(
             style = AuroraTextStyles.TimeTabular,
             color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
         )
+
+        if (onGeniusClick != null) {
+            Icon(
+                imageVector = Icons.Filled.AutoAwesome,
+                contentDescription = "Genius: stwórz playlistę na podstawie tego utworu",
+                tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f),
+                modifier = Modifier
+                    .padding(start = tokens.spacing.s)
+                    .size(18.dp)
+                    .clickable(onClick = onGeniusClick),
+            )
+        }
     }
 }
