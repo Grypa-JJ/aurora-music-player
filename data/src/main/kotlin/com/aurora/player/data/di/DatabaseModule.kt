@@ -6,6 +6,7 @@ import com.aurora.player.data.database.AuroraDatabase
 import com.aurora.player.data.database.dao.PlayEventDao
 import com.aurora.player.data.database.dao.SkipEventDao
 import com.aurora.player.data.database.dao.TrackAffinityDao
+import com.aurora.player.data.database.dao.TrackCooccurrenceDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -19,7 +20,13 @@ object DatabaseModule {
     @Provides
     @Singleton
     fun provideAuroraDatabase(@ApplicationContext context: Context): AuroraDatabase =
-        Room.databaseBuilder(context, AuroraDatabase::class.java, "aurora.db").build()
+        Room.databaseBuilder(context, AuroraDatabase::class.java, "aurora.db")
+            // Wczesny etap projektu, schemat się jeszcze zmienia — brak realnych migracji jest
+            // świadomy. Dane lokalnej historii są odtwarzalne (zbierają się od nowa), więc
+            // destrukcyjna migracja przy zmianie wersji jest tańsza niż pisanie Migration teraz.
+            // Do zastąpienia prawdziwymi Migration przed pierwszym publicznym wydaniem.
+            .fallbackToDestructiveMigration()
+            .build()
 
     @Provides
     fun providePlayEventDao(database: AuroraDatabase): PlayEventDao = database.playEventDao()
@@ -29,4 +36,7 @@ object DatabaseModule {
 
     @Provides
     fun provideTrackAffinityDao(database: AuroraDatabase): TrackAffinityDao = database.trackAffinityDao()
+
+    @Provides
+    fun provideTrackCooccurrenceDao(database: AuroraDatabase): TrackCooccurrenceDao = database.trackCooccurrenceDao()
 }

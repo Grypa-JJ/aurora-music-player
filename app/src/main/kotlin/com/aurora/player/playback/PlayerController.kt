@@ -76,6 +76,9 @@ class PlayerController @Inject constructor(
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 val previousTrack = _playbackState.value.currentTrack
+                val uri = mediaItem?.localConfiguration?.uri?.toString()
+                val newTrack = currentQueue.find { it.uri == uri }
+
                 if (previousTrack != null) {
                     val forcedCompleted = reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO
                     val playedMs = if (forcedCompleted) previousTrack.durationMs else lastKnownPositionMs
@@ -86,10 +89,13 @@ class PlayerController @Inject constructor(
                             durationMs = previousTrack.durationMs,
                         )
                     }
+                    if (newTrack != null) {
+                        scope.launch {
+                            playbackHistoryRepository.recordTransition(previousTrack.id, newTrack.id)
+                        }
+                    }
                 }
 
-                val uri = mediaItem?.localConfiguration?.uri?.toString()
-                val newTrack = currentQueue.find { it.uri == uri }
                 lastKnownPositionMs = 0L
                 _playbackState.update { it.copy(currentTrack = newTrack ?: it.currentTrack, positionMs = 0L) }
             }

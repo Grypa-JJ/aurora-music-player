@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.aurora.player.color.AlbumArtColorExtractor
 import com.aurora.player.color.AlbumArtPalette
 import com.aurora.player.domain.model.EqState
+import com.aurora.player.domain.model.GeniusMix
 import com.aurora.player.domain.model.PlaybackState
 import com.aurora.player.domain.model.Track
 import com.aurora.player.domain.repository.EqRepository
@@ -47,6 +48,12 @@ class LibraryViewModel @Inject constructor(
 
     private val _isGeneratingMix = MutableStateFlow(false)
     val isGeneratingMix: StateFlow<Boolean> = _isGeneratingMix.asStateFlow()
+
+    private val _geniusMixes = MutableStateFlow<List<GeniusMix>>(emptyList())
+    val geniusMixes: StateFlow<List<GeniusMix>> = _geniusMixes.asStateFlow()
+
+    private val _isLoadingMixes = MutableStateFlow(false)
+    val isLoadingMixes: StateFlow<Boolean> = _isLoadingMixes.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -123,5 +130,18 @@ class LibraryViewModel @Inject constructor(
 
     fun onEqReset() {
         eqRepository.reset()
+    }
+
+    /** Gotowe playlisty z klastrowania, bez wskazywania utworu-ziarna — DESIGN.md sekcja 5.5. */
+    fun loadGeniusMixes() {
+        viewModelScope.launch {
+            _isLoadingMixes.value = true
+            _geniusMixes.value = geniusRepository.generateGeniusMixes()
+            _isLoadingMixes.value = false
+        }
+    }
+
+    fun onPlayMix(mix: GeniusMix) {
+        playerRepository.playQueue(mix.tracks)
     }
 }

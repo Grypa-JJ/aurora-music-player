@@ -12,4 +12,8 @@ interface PlayEventDao {
 
     @Query("SELECT * FROM play_events WHERE trackId = :trackId")
     suspend fun forTrack(trackId: Long): List<PlayEventEntity>
+
+    /** Do wyliczenia kontekstu pory dnia w GeniusScoring — DESIGN.md sekcja 5.2. */
+    @Query("SELECT * FROM play_events")
+    suspend fun getAll(): List<PlayEventEntity>
 }

@@ -11,4 +11,7 @@ interface PlaybackHistoryRepository {
      * @param durationMs pełna długość utworu — używana do wyliczenia completionRatio (próg 80%)
      */
     suspend fun recordPlaybackEnded(trackId: Long, playedMs: Long, durationMs: Long)
+
+    /** Dwa utwory zagrane bezpośrednio po sobie — lokalny odpowiednik collaborative filtering. */
+    suspend fun recordTransition(fromTrackId: Long, toTrackId: Long)
 }

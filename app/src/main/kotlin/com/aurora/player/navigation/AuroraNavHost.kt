@@ -5,12 +5,14 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.aurora.player.genius.GeniusMixesScreen
 import com.aurora.player.library.LibraryScreen
 import com.aurora.player.library.LibraryViewModel
 import com.aurora.player.nowplaying.NowPlayingScreen
 
 private const val ROUTE_LIBRARY = "library"
 private const val ROUTE_NOW_PLAYING = "now_playing"
+private const val ROUTE_GENIUS_MIXES = "genius_mixes"
 
 /**
  * Jeden LibraryViewModel dzielony między ekranami (patrz DESIGN.md: single source of truth
@@ -27,6 +29,7 @@ fun AuroraNavHost(
             LibraryScreen(
                 viewModel = libraryViewModel,
                 onOpenNowPlaying = { navController.navigate(ROUTE_NOW_PLAYING) },
+                onOpenGeniusMixes = { navController.navigate(ROUTE_GENIUS_MIXES) },
             )
         }
         composable(ROUTE_NOW_PLAYING) {
@@ -34,6 +37,9 @@ fun AuroraNavHost(
                 viewModel = libraryViewModel,
                 onBack = { navController.popBackStack() },
             )
+        }
+        composable(ROUTE_GENIUS_MIXES) {
+            GeniusMixesScreen(viewModel = libraryViewModel)
         }
     }
 }

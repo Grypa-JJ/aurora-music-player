@@ -487,7 +487,12 @@ navigation/
   - Ikona Genius (gwiazdka) przy każdym utworze w bibliotece → generuje miks (seed + do 30 utworów) i ładuje jako kolejkę.
   - `affinityScore` liczony synchronicznie po każdym zdarzeniu (nie batchowany przez WorkManager) — świadome uproszczenie, wystarczające przy realistycznej skali eventów pojedynczego użytkownika.
   - Zostało z pełnego zakresu etapu 3 (odłożone do etapu 4, bo wymagają najpierw zebranej historii z realnego użytkowania): `TrackCooccurrence` (co-play), kontekst pory dnia, klastrowanie k-means ("Genius Mixes" bez seeda), zapis miksu jako trwałej playlisty.
-- [ ] Etap 4: cooccurrence + kontekst pory dnia, klastrowanie k-means, dopracowanie animacji/glassmorphism, trwałe playlisty.
+- [x] Etap 4 (część 1): cooccurrence + kontekst pory dnia + klastrowanie k-means ("Genius Mixes").
+  - `TrackCooccurrenceEntity`/`TrackCooccurrenceDao` (Room v2, `fallbackToDestructiveMigration()` — świadomie, historia lokalna jest odtwarzalna, prawdziwe `Migration` dojdą przed pierwszym publicznym wydaniem) — `PlayerController.onMediaItemTransition` zapisuje `recordTransition(poprzedni, następny)` przy każdym przejściu.
+  - `GeniusScoring` zaktualizowany do pełnej formuły z DESIGN.md 5.2 (wagi: gatunek .25/artysta .20/rok .10/tekst .10/cooccurrence .15/affinity .10/kontekst .05/świeżość .05) — cooccurrence i kontekst normalizowane `log(1+count)/log(1+maxCount)` względem konkurentów w danym zapytaniu; kontekst pory dnia to okno ±2h (z zawinięciem przez północ) na `play_events.hourOfDay`.
+  - `GeniusClustering` (domain, czysta funkcja, k-means z deterministycznym seedem — te same miksy między odświeżeniami dopóki biblioteka/historia się nie zmieni) — wektor cechy: one-hot top-K gatunków + znormalizowany rok + affinity (bez one-hot artystów, świadome uproszczenie wymiarowości). Nowy ekran **Genius Mixes** (`GeniusMixesScreen`, ikona gwiazdki w nagłówku Biblioteki) — lista gotowych playlist ("Genius Mix: Rock" itp.), tap = odtwórz jako kolejkę.
+  - Zostało z etapu 4: dopracowanie wizualne ekranu Genius Mixes (hero card + tematyczne "półki" zamiast jednej listy — patrz DESIGN.md 3.4), zapis miksu jako trwałej playlisty, WorkManager batching (na razie affinity liczone synchronicznie — nadal OK przy tej skali).
+- [ ] Etap 4 (część 2, polish): Haze/glassmorphism, prawdziwy font Inter (wymaga pobrania plików `.ttf` — do ustalenia z użytkownikiem), shared element transition mini-player↔Now Playing.
 
 ### Jak zbudować / uruchomić
 
