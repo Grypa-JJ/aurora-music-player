@@ -63,6 +63,8 @@ dependencies {
     implementation(libs.guava)
 
     implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.palette.ktx)
+    implementation("androidx.compose.animation:animation")
 
     implementation(libs.coil.compose)
 

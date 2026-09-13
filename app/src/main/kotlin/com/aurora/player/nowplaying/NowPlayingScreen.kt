@@ -1,5 +1,7 @@
 package com.aurora.player.nowplaying
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -31,6 +33,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
@@ -40,9 +44,11 @@ import com.aurora.player.library.LibraryViewModel
 import java.util.concurrent.TimeUnit
 
 /**
- * Odtwarzacz pełnoekranowy — patrz DESIGN.md sekcja 3.2.
- * Etap 1: bez dynamicznego koloru z okładki (Palette) i bez SharedTransitionLayout —
- * to świadomie odłożone (patrz status implementacji w DESIGN.md).
+ * Odtwarzacz pełnoekranowy — patrz DESIGN.md sekcja 3.2. Tło i akcent koloru są wyprowadzone
+ * dynamicznie z okładki albumu (Palette API, DarkMuted/Vibrant swatch) i animowane przy zmianie
+ * utworu — patrz DESIGN.md sekcja 2.1 ("dwuwarstwowy model akcentu").
+ * Etap 1: bez SharedTransitionLayout mini-player ↔ Now Playing — to świadomie odłożone
+ * (patrz status implementacji w DESIGN.md).
  */
 @Composable
 fun NowPlayingScreen(
@@ -51,13 +57,27 @@ fun NowPlayingScreen(
     modifier: Modifier = Modifier,
 ) {
     val playbackState by viewModel.playbackState.collectAsState()
+    val palette by viewModel.albumArtPalette.collectAsState()
     val tokens = LocalAuroraTokens.current
     val track = playbackState.currentTrack
+
+    val fallbackAccent = MaterialTheme.colorScheme.primary
+    val backgroundTop by animateColorAsState(
+        targetValue = palette.darkMuted ?: palette.darkVibrant ?: MaterialTheme.colorScheme.background,
+        animationSpec = tween(400),
+        label = "nowPlayingBackgroundTop",
+    )
+    val accentColor by animateColorAsState(
+        targetValue = palette.vibrant ?: fallbackAccent,
+        animationSpec = tween(400),
+        label = "nowPlayingAccent",
+    )
+    val backgroundBrush = Brush.verticalGradient(listOf(backgroundTop, Color(0xFF06060A)))
 
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(backgroundBrush)
             .padding(tokens.spacing.m),
     ) {
         Row(
@@ -126,8 +146,8 @@ fun NowPlayingScreen(
                     isDragging = false
                 },
                 colors = SliderDefaults.colors(
-                    thumbColor = MaterialTheme.colorScheme.primary,
-                    activeTrackColor = MaterialTheme.colorScheme.primary,
+                    thumbColor = accentColor,
+                    activeTrackColor = accentColor,
                 ),
             )
             Row(
@@ -157,14 +177,14 @@ fun NowPlayingScreen(
                 modifier = Modifier
                     .size(76.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary)
+                    .background(accentColor)
                     .clickable(onClick = viewModel::onTogglePlayPause),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = if (playbackState.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                     contentDescription = if (playbackState.isPlaying) "Pauza" else "Odtwórz",
-                    tint = androidx.compose.ui.graphics.Color.White,
+                    tint = Color.White,
                     modifier = Modifier.size(36.dp),
                 )
             }

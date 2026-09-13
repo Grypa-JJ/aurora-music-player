@@ -12,6 +12,7 @@ hilt = "2.52"
 coroutines = "1.9.0"
 navigationCompose = "2.8.5"
 guava = "33.3.1-android"
+paletteKtx = "1.0.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -36,6 +37,7 @@ hilt-compiler = { group = "com.google.dagger", name = "hilt-android-compiler", v
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
 guava = { group = "com.google.guava", name = "guava", version.ref = "guava" }
+androidx-palette-ktx = { group = "androidx.palette", name = "palette-ktx", version.ref = "paletteKtx" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
