@@ -1,5 +1,8 @@
 package com.aurora.player.designsystem.components
 
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -35,7 +38,10 @@ import dev.chrisbanes.haze.materials.HazeMaterials
  * [hazeState] opcjonalny: gdy podany (wołający ekran oznaczył scrollowaną treść pod spodem
  * przez `Modifier.hazeSource`), tło jest prawdziwym blur-em (Haze) zamiast płaskiego koloru —
  * degradacja na starszych urządzeniach jest wbudowana w bibliotekę, nic nie trzeba robić ręcznie.
+ * [sharedTransitionScope]/[animatedVisibilityScope] opcjonalne — gdy podane, okładka albumu
+ * płynnie "leci" do Now Playing po tapnięciu (patrz `sharedElementOrSelf`, DESIGN.md 2.4 pkt 7).
  */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun MiniPlayerBar(
     title: String,
@@ -46,6 +52,9 @@ fun MiniPlayerBar(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     hazeState: HazeState? = null,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
+    albumArtSharedKey: Any = "album_art",
 ) {
     val tokens = LocalAuroraTokens.current
     val surfaceColor = MaterialTheme.colorScheme.surface
@@ -69,7 +78,8 @@ fun MiniPlayerBar(
             modifier = Modifier
                 .size(44.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(MaterialTheme.colorScheme.background),
+                .background(MaterialTheme.colorScheme.background)
+                .sharedElementOrSelf(sharedTransitionScope, animatedVisibilityScope, albumArtSharedKey),
         ) {
             if (albumArtUrl != null) {
                 AsyncImage(model = albumArtUrl, contentDescription = null, modifier = Modifier.size(44.dp))

@@ -5,6 +5,9 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -53,12 +56,16 @@ private val audioPermission: String
         Manifest.permission.READ_EXTERNAL_STORAGE
     }
 
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun LibraryScreen(
     viewModel: LibraryViewModel,
     onOpenNowPlaying: () -> Unit,
     onOpenGeniusMixes: () -> Unit,
     modifier: Modifier = Modifier,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
+    albumArtSharedKey: Any = "album_art",
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
@@ -212,6 +219,9 @@ fun LibraryScreen(
                 onTogglePlayPause = viewModel::onTogglePlayPause,
                 onClick = onOpenNowPlaying,
                 hazeState = hazeState,
+                sharedTransitionScope = sharedTransitionScope,
+                animatedVisibilityScope = animatedVisibilityScope,
+                albumArtSharedKey = albumArtSharedKey,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(tokens.spacing.m),

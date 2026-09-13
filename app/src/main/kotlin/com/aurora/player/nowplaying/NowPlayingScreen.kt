@@ -1,5 +1,8 @@
 package com.aurora.player.nowplaying
 
+import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -44,6 +47,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.aurora.player.designsystem.components.VisualizerBars
+import com.aurora.player.designsystem.components.sharedElementOrSelf
 import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
 import com.aurora.player.eq.EqualizerSheet
@@ -56,14 +60,18 @@ import java.util.concurrent.TimeUnit
  * Odtwarzacz pełnoekranowy — patrz DESIGN.md sekcja 3.2. Tło i akcent koloru są wyprowadzone
  * dynamicznie z okładki albumu (Palette API, DarkMuted/Vibrant swatch) i animowane przy zmianie
  * utworu — patrz DESIGN.md sekcja 2.1 ("dwuwarstwowy model akcentu").
- * Etap 1: bez SharedTransitionLayout mini-player ↔ Now Playing — to świadomie odłożone
- * (patrz status implementacji w DESIGN.md).
+ * [sharedTransitionScope]/[animatedVisibilityScope] (z `AuroraNavHost`) dają płynne przejście
+ * okładki z mini-playera — patrz `sharedElementOrSelf`, DESIGN.md 2.4 pkt 7.
  */
+@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun NowPlayingScreen(
     viewModel: LibraryViewModel,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    sharedTransitionScope: SharedTransitionScope? = null,
+    animatedVisibilityScope: AnimatedVisibilityScope? = null,
+    albumArtSharedKey: Any = "album_art",
 ) {
     val playbackState by viewModel.playbackState.collectAsState()
     val palette by viewModel.albumArtPalette.collectAsState()
@@ -125,7 +133,8 @@ fun NowPlayingScreen(
                 .padding(top = tokens.spacing.xl)
                 .aspectRatio(1f)
                 .clip(RoundedCornerShape(24.dp))
-                .background(MaterialTheme.colorScheme.surface),
+                .background(MaterialTheme.colorScheme.surface)
+                .sharedElementOrSelf(sharedTransitionScope, animatedVisibilityScope, albumArtSharedKey),
             contentAlignment = Alignment.Center,
         ) {
             if (track?.albumArtUri != null) {
