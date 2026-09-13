@@ -496,7 +496,11 @@ navigation/
   - Biblioteka `dev.chrisbanes.haze` — **przypięta na 1.6.10**, nie najnowsza: 1.7.3 wymaga compileSdk 37 (nie mamy zainstalowanej platformy), a 1.7.2 (mimo że sam ma minCompileSdk=1) ciągnie tranzytywnie `androidx.navigationevent:1.0.1`, który wymaga compileSdk 36 + AGP 8.9.1+ — oba fakty zweryfikowane rozpakowaniem `aar-metadata.properties` z Maven Central, nie zgadywaniem. 1.6.10 buduje się czysto na obecnym compileSdk 35/AGP 8.7.3. Do rozważenia przy przyszłym podniesieniu compileSdk/AGP.
   - `MiniPlayerBar` (core:designsystem) i `EqualizerSheet` przyjmują opcjonalny `HazeState` — gdy podany, tło jest prawdziwym blurem (`hazeEffect` + `HazeMaterials.thin/regular`) zamiast płaskiego koloru; gdy `null`, degradacja do zwykłego `background()` (starszy wzorzec, wciąż działa). Degradacja na urządzeniach <API 31 jest wbudowana w samą bibliotekę Haze, nic dodatkowego nie trzeba było pisać.
   - `LibraryScreen`: `LazyColumn` oznaczona jako `hazeSource`, `MiniPlayerBar` czyta z niej blur. `NowPlayingScreen`: cały ekran jako `hazeSource`, `EqualizerSheet` czyta blur (wzorzec `containerColor = Transparent` + `hazeEffect` na modifierze sheeta, zweryfikowany na oficjalnym przykładzie biblioteki — `ScaffoldSample`/`LargeTopAppBar`).
-- [ ] Etap 4 (część 2b, zostało): prawdziwy font Inter (wymaga pobrania plików `.ttf` — do ustalenia z użytkownikiem), shared element transition mini-player↔Now Playing (wymaga `SharedTransitionLayout`, eksperymentalne API Compose 1.7+).
+- [x] Etap 4 (część 2b): prawdziwy font Inter.
+  - Pobrany z oficjalnego wydania `rsms/inter` v4.1 (GitHub Releases) — ta wersja dystrybuuje Inter wyłącznie jako **variable font** (jeden plik `InterVariable.ttf`, 879KB), nie osobne pliki na wagę jak zakładał wcześniejszy komentarz TODO. Plik w `core/designsystem/src/main/res/font/inter_variable.ttf`, licencja SIL OFL w `licenses/Inter-LICENSE.txt`.
+  - `AuroraFontFamily` (`Typography.kt`) buduje 3 wagi (400/500/600) z jednego pliku przez `Font(..., variationSettings = FontVariation.Settings(FontVariation.weight(w)))` (`@OptIn(ExperimentalTextApi::class)`) — nowocześniejsze i lżejsze niż trzy osobne pliki statyczne.
+  - `.gitattributes` dodany (`*.ttf binary` itd.), żeby git/CRLF nigdy nie tknął plików binarnych.
+- [ ] Etap 4 (część 2c, zostało): shared element transition mini-player↔Now Playing (wymaga `SharedTransitionLayout`, eksperymentalne API Compose 1.7+, wątek nawigacji trzeba przepleść przez `AnimatedContentScope`).
 
 ### Jak zbudować / uruchomić
 

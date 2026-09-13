@@ -1,15 +1,39 @@
 package com.aurora.player.designsystem.theme
 
 import androidx.compose.material3.Typography
+import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import com.aurora.player.designsystem.R
 
-// TODO(etap 1): zastąpić prawdziwymi plikami fontu Inter w res/font/ (inter_regular/medium/semibold.ttf)
-// i podpiąć przez FontFamily(Font(R.font.inter_regular, FontWeight.W400), ...) — patrz DESIGN.md 2.2.
-// Do czasu dodania plików fontu używamy FontFamily.SansSerif jako placeholder z tą samą skalą/wagami.
-val AuroraFontFamily = FontFamily.SansSerif
+/**
+ * Inter jako pojedynczy plik variable font (`InterVariable.ttf`, oficjalne wydanie rsms/inter
+ * v4.1 — od tej wersji projekt dystrybuuje tylko wariant zmiennoprzecinkowy, nie osobne pliki
+ * na wagę) — trzy wagi wyprowadzone z jednego pliku przez `FontVariation.Settings`.
+ * Patrz DESIGN.md sekcja 2.2. Nigdy pełny Bold (700+) — maks. 3 wagi w całej apce.
+ */
+@OptIn(ExperimentalTextApi::class)
+val AuroraFontFamily = FontFamily(
+    Font(
+        resId = R.font.inter_variable,
+        weight = FontWeight.W400,
+        variationSettings = FontVariation.Settings(FontVariation.weight(400)),
+    ),
+    Font(
+        resId = R.font.inter_variable,
+        weight = FontWeight.W500,
+        variationSettings = FontVariation.Settings(FontVariation.weight(500)),
+    ),
+    Font(
+        resId = R.font.inter_variable,
+        weight = FontWeight.W600,
+        variationSettings = FontVariation.Settings(FontVariation.weight(600)),
+    ),
+)
 
 object AuroraTextStyles {
     val Display = TextStyle(
