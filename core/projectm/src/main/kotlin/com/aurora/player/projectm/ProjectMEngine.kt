@@ -86,23 +86,39 @@ class ProjectMEngine {
         }
     }
 
-    /**
-     * Czyści playlistę i skanuje w poszukiwaniu `.milk` tylko podkatalogi [mode]
-     * ([ProjectMVisualizerMode.presetSubfolders], `null` = cały [presetsRootDir] — patrz
-     * [PresetInstaller] dla pochodzenia tej ścieżki na dysku). Bezpieczne do wołania ponownie
-     * przy przełączeniu trybu w trakcie działania (Etap 10) — nie tylko przy starcie.
-     */
-    fun loadPresets(presetsRootDir: String, mode: ProjectMVisualizerMode, shuffle: Boolean = true) {
+    /** "Czułość na beat" z panelu ustawień (Etap 10 część 2) — realny parametr API projectM. */
+    fun setBeatSensitivity(sensitivity: Float) {
         lock.read {
             if (handle == 0L) return@read
-            ProjectMNative.playlistClear(handle)
+            ProjectMNative.setBeatSensitivity(handle, sensitivity)
+        }
+    }
 
-            val paths = mode.presetSubfolders?.map { "$presetsRootDir/$it" } ?: listOf(presetsRootDir)
-            val totalAdded = paths.sumOf { path -> ProjectMNative.playlistAddPath(handle, path, true) }
-            if (totalAdded <= 0) return@read
+    /**
+     * Czy silne uderzenia basu mogą wymusić natychmiastową (nie płynną) zmianę presetu.
+     * [sensitivity] tylko ma znaczenie gdy [enabled] — im wyżej, tym łatwiej wywołać hard cut.
+     */
+    fun setHardCut(enabled: Boolean, sensitivity: Float) {
+        lock.read {
+            if (handle == 0L) return@read
+            ProjectMNative.setHardCutEnabled(handle, enabled)
+            ProjectMNative.setHardCutSensitivity(handle, sensitivity)
+        }
+    }
 
-            ProjectMNative.playlistSetShuffle(handle, shuffle)
-            ProjectMNative.playlistPlayNext(handle, true)
+    /**
+     * Ładuje DOKŁADNIE wskazany plik `.milk` (patrz [PresetLibrary]) — Etap 16 (DESIGN.md):
+     * zastępuje wcześniejsze poleganie na natywnej playlist projectM do wyboru presetu, bo jej
+     * wewnętrznej pozycji nie dało się odczytać/przenieść między dwiema osobnymi instancjami
+     * `ProjectMSurfaceView` (ramka inline vs. pełny ekran) — zgłoszony bug: przejście między nimi
+     * losowało nowy, inny preset zamiast zachować ten, na który patrzył użytkownik. Kotlin trzyma
+     * indeks/ścieżkę jako zwykły stan Compose (lifted do `NowPlayingScreen`), więc ciągłość jest
+     * teraz gwarantowana wprost, nie przez zgadywanie stanu natywnej playlisty.
+     */
+    fun loadPresetFile(path: String, smoothTransition: Boolean) {
+        lock.read {
+            if (handle == 0L) return@read
+            ProjectMNative.loadPresetFile(handle, path, smoothTransition)
         }
     }
 

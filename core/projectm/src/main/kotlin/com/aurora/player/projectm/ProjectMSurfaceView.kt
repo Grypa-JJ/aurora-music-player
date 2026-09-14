@@ -9,7 +9,10 @@ import javax.microedition.khronos.opengles.GL10
 /**
  * `GLSurfaceView` osadzający jedną instancję [ProjectMEngine]. Cały cykl życia natywnego handle'a
  * (create/destroy/render/resize) trzyma się wątku GL tego widoku — projectM tego wymaga (patrz
- * [ProjectMEngine]). Osadzany w Compose przez `AndroidView` — patrz `NowPlayingScreen`.
+ * [ProjectMEngine]). Osadzany w Compose przez `AndroidView` — patrz `ProjectMSurface`.
+ *
+ * Etap 16: wybór presetu (KTÓRY plik `.milk` jest widoczny) jest w całości sterowany z zewnątrz
+ * przez [jumpToPreset] — ten widok nie ma już własnej playlisty/losowania, patrz [PresetLibrary].
  */
 class ProjectMSurfaceView @JvmOverloads constructor(
     context: Context,
@@ -22,14 +25,13 @@ class ProjectMSurfaceView @JvmOverloads constructor(
     @Volatile
     var installedAssetsDir: String? = null
 
-    /**
-     * Ustawiane bezpośrednio tylko PRZED zamontowaniem widoku, żeby pierwsze `onSurfaceCreated`
-     * od razu załadowało właściwy tryb — patrz `ProjectMSurface`. Po zamontowaniu zmiana trybu
-     * w locie idzie przez [setVisualizerMode] (osobna nazwa, bo Kotlin i tak wygenerowałby
-     * `setVisualizerMode` jako setter tej właściwości — kolizja JVM, gdyby nazwać ją tak samo).
-     */
+    /** Ustawiane bezpośrednio tylko PRZED zamontowaniem — patrz `ProjectMSurface`. */
     @Volatile
-    var initialVisualizerMode: ProjectMVisualizerMode = ProjectMVisualizerMode.ALL
+    var initialSettings: ProjectMVisualizerSettings = ProjectMVisualizerSettings()
+
+    /** Jak [initialSettings] — dokładna ścieżka `.milk` do załadowania od razu przy tworzeniu. */
+    @Volatile
+    var initialPresetPath: String? = null
 
     private val pcmSink = ProjectMPcmSink { samples, frameCount, channels ->
         engine.addPcm(samples, frameCount, channels)
@@ -43,14 +45,24 @@ class ProjectMSurfaceView @JvmOverloads constructor(
     }
 
     /**
-     * Przełącza tryb wizualizera (Etap 10) w trakcie działania — wymaga wątku GL (jak każda
-     * operacja na playliście/instancji projectM), więc idzie przez `queueEvent`, nie wywołuje się
-     * bezpośrednio z wątku Compose.
+     * Ładuje dokładnie wskazany plik `.milk` w locie — wymaga wątku GL, stąd `queueEvent`.
+     * Wołające (patrz `ProjectMSurface`) trzyma stan "który plik jest aktualny" jako zwykły stan
+     * Compose lifted do `NowPlayingScreen`, więc ta sama wartość może zostać przekazana kolejnej,
+     * osobnej instancji tego widoku (ramka<->pełny ekran) — to jest naprawa zgłoszonego bugu
+     * "przejście do pełnego ekranu losuje inny preset".
      */
-    fun setVisualizerMode(mode: ProjectMVisualizerMode) {
-        initialVisualizerMode = mode
-        val baseDir = installedAssetsDir ?: return
-        queueEvent { engine.loadPresets("$baseDir/presets", mode) }
+    fun jumpToPreset(path: String, smoothTransition: Boolean) {
+        queueEvent { engine.loadPresetFile(path, smoothTransition) }
+    }
+
+    /** Stosuje ustawienia z panelu (Etap 10 część 2) w locie — jak [jumpToPreset], wymaga wątku GL. */
+    fun applySettings(settings: ProjectMVisualizerSettings) {
+        initialSettings = settings
+        queueEvent {
+            engine.setPresetDuration(settings.presetDurationSeconds)
+            engine.setBeatSensitivity(settings.beatSensitivity)
+            engine.setHardCut(settings.hardCutEnabled, settings.hardCutSensitivity)
+        }
     }
 
     /** Wołać z `DisposableEffect.onDispose` po stronie Compose. */
@@ -62,11 +74,12 @@ class ProjectMSurfaceView @JvmOverloads constructor(
     private inner class InternalRenderer : Renderer {
         override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
             engine.create()
-            engine.setPresetDuration(PRESET_DURATION_SECONDS)
-            installedAssetsDir?.let { baseDir ->
-                engine.setTextureSearchPath("$baseDir/textures")
-                engine.loadPresets("$baseDir/presets", initialVisualizerMode)
-            }
+            val settings = initialSettings
+            engine.setPresetDuration(settings.presetDurationSeconds)
+            engine.setBeatSensitivity(settings.beatSensitivity)
+            engine.setHardCut(settings.hardCutEnabled, settings.hardCutSensitivity)
+            installedAssetsDir?.let { baseDir -> engine.setTextureSearchPath("$baseDir/textures") }
+            initialPresetPath?.let { path -> engine.loadPresetFile(path, smoothTransition = false) }
             ProjectMPcmBridge.attach(pcmSink)
         }
 
@@ -77,11 +90,5 @@ class ProjectMSurfaceView @JvmOverloads constructor(
         override fun onDrawFrame(gl: GL10?) {
             engine.renderFrame()
         }
-    }
-
-    private companion object {
-        // Jak długo pojedynczy preset gra, zanim projectM sam poprosi playlistę o kolejny
-        // (automatycznie, patrz komentarz w ProjectMEngine.create()/ProjectMNative.create()).
-        const val PRESET_DURATION_SECONDS = 20.0
     }
 }

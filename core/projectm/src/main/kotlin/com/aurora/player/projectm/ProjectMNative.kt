@@ -16,10 +16,10 @@ internal object ProjectMNative {
     external fun setWindowSize(handle: Long, width: Int, height: Int)
     external fun renderFrame(handle: Long)
     external fun setPresetDuration(handle: Long, seconds: Double)
+    external fun loadPresetFile(handle: Long, path: String, smoothTransition: Boolean)
     external fun setTextureSearchPath(handle: Long, path: String)
+    external fun setBeatSensitivity(handle: Long, sensitivity: Float)
+    external fun setHardCutEnabled(handle: Long, enabled: Boolean)
+    external fun setHardCutSensitivity(handle: Long, sensitivity: Float)
     external fun addPcmInt16(handle: Long, samples: ShortArray, frameCount: Int, channels: Int)
-    external fun playlistAddPath(handle: Long, path: String, recurseSubdirs: Boolean): Int
-    external fun playlistClear(handle: Long)
-    external fun playlistSetShuffle(handle: Long, shuffle: Boolean)
-    external fun playlistPlayNext(handle: Long, hardCut: Boolean): Int
 }

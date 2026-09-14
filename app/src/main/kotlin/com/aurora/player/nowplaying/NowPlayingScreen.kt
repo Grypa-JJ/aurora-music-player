@@ -7,7 +7,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Info
@@ -37,6 +37,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -57,9 +58,11 @@ import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
 import com.aurora.player.eq.EqualizerSheet
 import com.aurora.player.library.LibraryViewModel
+import com.aurora.player.projectm.AmbientGlow
 import com.aurora.player.projectm.ProjectMEngine
 import com.aurora.player.projectm.ProjectMSurface
 import com.aurora.player.projectm.ProjectMVisualizerMode
+import com.aurora.player.projectm.ProjectMVisualizerSettings
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import java.util.concurrent.TimeUnit
@@ -112,29 +115,48 @@ fun NowPlayingScreen(
     // stary generatywny AuroraVisualizer zamiast crashować lub pokazywać czarny ekran.
     val isProjectMSupported = remember { ProjectMEngine.isDeviceSupported(context) }
 
-    // ŚWIADOMIE bez movableContentOf: sprawdzone na żywo na emulatorze, że przeniesienie tego
-    // samego AndroidView między kontenerem inline (kwadrat) a pełnoekranowym nie wymusza
-    // ponownego layoutu — GLSurfaceView zostawał zablokowany na starym rozmiarze (996×996) nawet
-    // po przeniesieniu do pełnoekranowego Boxa (potwierdzone logiem onSurfaceChanged). Zamiast
-    // dalej gonić tę niedopracowaną kombinację AndroidView+movableContentOf, każdy tryb dostaje
-    // WŁASNĄ instancję — engine.create() jest już idempotentny (patrz ProjectMEngine.create()),
-    // więc koszt to tylko krótki restart bieżącego presetu przy przełączeniu ramka<->pełny ekran,
-    // nie crash ani zła rozdzielczość. To dokładnie fallback przewidziany w DESIGN.md Etap 9
-    // ("jeśli movableContentOf się nie sprawdzi, zaakceptuj koszt re-initu zamiast całej
-    // architektury") — tylko odkryty empirycznie zamiast z góry.
-    // Etap 10: dobór domyślnego trybu wg gatunku bieżącego utworu — tylko punkt startowy,
-    // przełącznik chipów na pełnym ekranie i tak pozwala to nadpisać ręcznie w dowolnej chwili.
+    // Etap 16 (DESIGN.md) — LIFTED tutaj (nie wewnętrzny stan `ProjectMSurface`), bo ramka inline
+    // i nakładka pełnoekranowa to dwie OSOBNE instancje silnika (patrz komentarz w ProjectMSurface)
+    // i muszą dzielić dokładnie tę samą kategorię/preset, żeby przejście między nimi nie
+    // "przeskakiwało" na inną wizualizację — to była zgłoszona regresja z Etapu 10.
     val defaultVisualizerMode = remember(track?.genre) {
         ProjectMVisualizerMode.defaultForGenre(track?.genre)
     }
+    var projectMMode by remember(track?.genre) { mutableStateOf(defaultVisualizerMode) }
+    var currentPresetPath by remember { mutableStateOf<String?>(null) }
+    var visualizerSettings by remember(track?.genre) {
+        mutableStateOf(
+            ProjectMVisualizerSettings(
+                presetDurationSeconds = ProjectMVisualizerSettings.defaultPresetDurationForGenre(track?.genre),
+            ),
+        )
+    }
+
+    // Zgłoszenie: "wizualizer powinien wracać do trybu okładki i zatrzymywać animację, gdy
+    // muzyka przestaje grać". `AuroraVisualizer`/projectM i tak przestają dostawać nowe próbki
+    // (cisza), ale sam WIDOK ma jawnie wrócić do okładki, nie zostać "zawieszony" na wizualizerze.
+    LaunchedEffect(playbackState.isPlaying) {
+        if (!playbackState.isPlaying && visualizerMode != VisualizerMode.AlbumArt) {
+            visualizerMode = VisualizerMode.AlbumArt
+        }
+    }
 
     @Composable
-    fun VisualizerSurface(surfaceModifier: Modifier, showModeSwitcher: Boolean) {
+    fun VisualizerSurface(surfaceModifier: Modifier) {
         if (isProjectMSupported) {
             ProjectMSurface(
                 modifier = surfaceModifier,
-                initialMode = defaultVisualizerMode,
-                showModeSwitcher = showModeSwitcher,
+                mode = projectMMode,
+                onModeChange = { projectMMode = it },
+                currentPresetPath = currentPresetPath,
+                onPresetPathChange = { currentPresetPath = it },
+                settings = visualizerSettings,
+                onSettingsChange = { visualizerSettings = it },
+                // Etap 16, zgłoszenie: chipy trybu i tryb ustawień mają być dostępne też w małej
+                // ramce, nie tylko na pełnym ekranie — nie ma już osobnego "trybu bez przełącznika".
+                showModeSwitcher = true,
+                showSettingsButton = true,
+                onTapCyclesPreset = true,
             )
         } else {
             AuroraVisualizer(
@@ -194,6 +216,24 @@ fun NowPlayingScreen(
             EqualizerSheet(viewModel = viewModel, onDismiss = { showEqSheet = false }, hazeState = hazeState)
         }
 
+        // AmbientGlow rysowany PIERWSZY (czyli niżej) — poświata pulsująca basem/głośnością,
+        // podbarwiona kolorem okładki, widoczna tylko gdy ramka "ucieka" spod niej przy pulsie
+        // (patrz komentarz w AmbientGlow.kt: identyczne wymiary co ramka poniżej, więc w spoczynku
+        // jest całkowicie ukryta pod nieprzezroczystym tłem ramki). Etap 10 część 2.
+        Box(contentAlignment = Alignment.Center) {
+            if (isProjectMSupported) {
+                AmbientGlow(
+                    bassEnergy = visualizerFrame.bassEnergy,
+                    overallEnergy = visualizerFrame.overallEnergy,
+                    color = accentColor,
+                    colorSource = visualizerSettings.colorSource,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = tokens.spacing.xl)
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(24.dp)),
+                )
+            }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -202,15 +242,11 @@ fun NowPlayingScreen(
                 .clip(RoundedCornerShape(24.dp))
                 .background(MaterialTheme.colorScheme.surface)
                 .sharedElementOrSelf(sharedTransitionScope, animatedVisibilityScope, albumArtSharedKey)
-                .clickable(enabled = visualizerMode != VisualizerMode.Fullscreen) {
-                    // Tap gdziekolwiek w ramce poza przyciskiem pełnego ekranu = przełącznik
-                    // okładka <-> wizualizer w miejscu (nie pełny ekran od razu, patrz DESIGN.md
-                    // Etap 9 — to zamierzona zmiana względem Etapu 8, gdzie tap od razu dawał
-                    // pełny ekran).
-                    visualizerMode = when (visualizerMode) {
-                        VisualizerMode.AlbumArt -> VisualizerMode.Inline
-                        else -> VisualizerMode.AlbumArt
-                    }
+                .clickable(enabled = visualizerMode == VisualizerMode.AlbumArt) {
+                    // Etap 16, zgłoszenie: tap na okładce pokazuje wizualizer w ramce; PONOWNY tap
+                    // na samym wizualizerze (obsłużony wewnątrz `ProjectMSurface`, nie tutaj) zmienia
+                    // preset zamiast wracać do okładki — powrót jest teraz TYLKO przez jawny X.
+                    visualizerMode = VisualizerMode.Inline
                 },
             contentAlignment = Alignment.Center,
         ) {
@@ -234,8 +270,11 @@ fun NowPlayingScreen(
                     )
                 }
                 VisualizerMode.Inline -> {
-                    // Bez przełącznika trybów - za mało miejsca w kwadratowej ramce, patrz DESIGN.md Etap 10.
-                    VisualizerSurface(Modifier.fillMaxSize(), showModeSwitcher = false)
+                    VisualizerSurface(Modifier.fillMaxSize())
+                    CloseVisualizerButton(
+                        modifier = Modifier.align(Alignment.TopStart).padding(tokens.spacing.s),
+                        onClick = { visualizerMode = VisualizerMode.AlbumArt },
+                    )
                     Icon(
                         imageVector = Icons.Filled.Fullscreen,
                         contentDescription = "Pełny ekran",
@@ -248,11 +287,12 @@ fun NowPlayingScreen(
                     )
                 }
                 VisualizerMode.Fullscreen -> {
-                    // Sama treść wizualizera jest w tym momencie w nakładce pełnoekranowej
-                    // poniżej (ta sama, przeniesiona instancja przez movableContentOf) — ramka
-                    // zostaje pusta, żeby nie renderować dwóch kopii naraz.
+                    // Treść wizualizera renderuje się w tym momencie we WŁASNEJ instancji w
+                    // nakładce pełnoekranowej poniżej (świadomie bez movableContentOf, patrz jej
+                    // komentarz) — ramka zostaje pusta, żeby nie renderować dwóch kopii naraz.
                 }
             }
+        }
         }
 
         Column(modifier = Modifier.padding(top = tokens.spacing.xl)) {
@@ -356,21 +396,22 @@ fun NowPlayingScreen(
         }
     }
 
-        // Pełnoekranowa nakładka — tap gdziekolwiek zwija z powrotem do ramki (nie do okładki,
-        // to świadomy wybór UX, patrz DESIGN.md Etap 9). Ta sama instancja co w ramce inline
-        // Własna instancja (nie ta sama co w ramce inline) — patrz komentarz przy
-        // VisualizerSurface wyżej: świadomie bez movableContentOf po testach na emulatorze.
+        // Pełnoekranowa nakładka — WŁASNA instancja silnika (nie ta sama co w ramce inline, patrz
+        // komentarz przy VisualizerSurface: świadomie bez movableContentOf po testach na
+        // emulatorze). Etap 16, zgłoszenie: tap na wizualizerze zmienia preset (obsłużone
+        // wewnątrz ProjectMSurface), powrót do okładki TYLKO przez jawny X w rogu — stary gest
+        // "tap gdziekolwiek zwija" usunięty, bo kolidował z nowym "tap = następny preset".
         if (visualizerMode == VisualizerMode.Fullscreen) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black)
-                    .clickable(
-                        indication = null,
-                        interactionSource = remember { MutableInteractionSource() },
-                    ) { visualizerMode = VisualizerMode.Inline },
+                    .background(Color.Black),
             ) {
-                VisualizerSurface(Modifier.fillMaxSize(), showModeSwitcher = true)
+                VisualizerSurface(Modifier.fillMaxSize())
+                CloseVisualizerButton(
+                    modifier = Modifier.align(Alignment.TopStart).padding(tokens.spacing.m),
+                    onClick = { visualizerMode = VisualizerMode.AlbumArt },
+                )
             }
         }
     }
@@ -381,4 +422,17 @@ private fun formatTime(ms: Long): String {
     val minutes = totalSeconds / 60
     val seconds = totalSeconds % 60
     return "%d:%02d".format(minutes, seconds)
+}
+
+/** Jedyny sposób powrotu do okładki z wizualizera (ramka lub pełny ekran) — Etap 16, zgłoszenie. */
+@Composable
+private fun CloseVisualizerButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Icon(
+        imageVector = Icons.Filled.Close,
+        contentDescription = "Zamknij wizualizer",
+        tint = Color.White.copy(alpha = 0.9f),
+        modifier = modifier
+            .size(28.dp)
+            .clickable(onClick = onClick),
+    )
 }

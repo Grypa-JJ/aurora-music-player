@@ -1,18 +1,21 @@
-// Cienki most JNI do libprojectM-4 (C API) — patrz DESIGN.md Etap 9. Żadnej logiki wizualnej
-// tutaj: to tylko przełożenie wywołań Kotlin 1:1 na funkcje C z projectM-4/projectM.h i
-// projectM-4/playlist.h (nagłówki z Prefab, wersja 4.1.7 — patrz local-maven-repo).
+// Cienki most JNI do libprojectM-4 (C API) — patrz DESIGN.md Etap 9/16. Żadnej logiki wizualnej
+// tutaj: to tylko przełożenie wywołań Kotlin 1:1 na funkcje C z projectM-4/projectM.h.
+//
+// Etap 16: biblioteka playlist USUNIĘTA — wybór presetu jest teraz w całości po stronie Kotlin
+// (patrz PresetLibrary.kt/ProjectMEngine.loadPresetFile), bo natywnej pozycji playlisty nie dało
+// się odczytać/przenieść między dwiema osobnymi instancjami silnika (ramka inline vs. pełny ekran),
+// co powodowało zgłoszony bug: przejście między nimi losowało zupełnie inny preset.
 //
 // Wątkowość (zweryfikowane w oficjalnym API-Reference/Integration-Quickstart-Guide projectM):
-// create/destroy/setWindowSize/renderFrame/playlist* MUSZĄ być wołane z tego samego wątku, który
-// ma aktywny kontekst OpenGL (u nas: wątek GL surface'u) — to twardy wymóg samego OpenGL, nie
-// tylko projectM. addPcmInt16 można wołać z osobnego wątku audio równolegle z renderem: projectM
-// nie synchronizuje wewnętrznie bufora PCM, więc realny wyścig da co najwyżej lekko "zamazaną"
-// klatkę wizualizacji, nigdy crash (udokumentowane zachowanie, nie błąd).
+// create/destroy/setWindowSize/renderFrame/loadPresetFile MUSZĄ być wołane z tego samego wątku,
+// który ma aktywny kontekst OpenGL (u nas: wątek GL surface'u) — to twardy wymóg samego OpenGL,
+// nie tylko projectM. addPcmInt16 można wołać z osobnego wątku audio równolegle z renderem:
+// projectM nie synchronizuje wewnętrznie bufora PCM, więc realny wyścig da co najwyżej lekko
+// "zamazaną" klatkę wizualizacji, nigdy crash (udokumentowane zachowanie, nie błąd).
 #include <jni.h>
 #include <android/log.h>
 
 #include <projectM-4/projectM.h>
-#include <projectM-4/playlist.h>
 
 #define LOG_TAG "ProjectMJni"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
@@ -21,7 +24,6 @@ namespace {
 
 struct ProjectMContext {
     projectm_handle instance = nullptr;
-    projectm_playlist_handle playlist = nullptr;
 };
 
 ProjectMContext* toContext(jlong handle) {
@@ -41,13 +43,6 @@ Java_com_aurora_player_projectm_ProjectMNative_create(JNIEnv*, jobject) {
         delete ctx;
         return 0;
     }
-    // projectm_playlist_create z niepustym instance od razu podpina callback "preset switch
-    // requested" (patrz projectM-4/playlist_core.h) - dalsza automatyczna zmiana presetow po
-    // uplywie czasu (setPresetDuration) dzieje sie sama, bez udzialu strony Kotlin/JNI.
-    ctx->playlist = projectm_playlist_create(ctx->instance);
-    if (ctx->playlist == nullptr) {
-        LOGE("projectm_playlist_create() zwrocil null");
-    }
     return reinterpret_cast<jlong>(ctx);
 }
 
@@ -55,9 +50,6 @@ JNIEXPORT void JNICALL
 Java_com_aurora_player_projectm_ProjectMNative_destroy(JNIEnv*, jobject, jlong handle) {
     auto* ctx = toContext(handle);
     if (ctx == nullptr) return;
-    if (ctx->playlist != nullptr) {
-        projectm_playlist_destroy(ctx->playlist);
-    }
     if (ctx->instance != nullptr) {
         projectm_destroy(ctx->instance);
     }
@@ -85,6 +77,48 @@ Java_com_aurora_player_projectm_ProjectMNative_setPresetDuration(JNIEnv*, jobjec
     auto* ctx = toContext(handle);
     if (ctx == nullptr || ctx->instance == nullptr) return;
     projectm_set_preset_duration(ctx->instance, seconds);
+}
+
+// Bezposredni odczyt jednego, konkretnego presetu z podanej sciezki - patrz PresetLibrary.kt:
+// zastepuje playlist jako mechanizm wyboru presetu, zeby Kotlin mogl trzymac i przenosic
+// dokladnie ten sam indeks/plik miedzy dwiema oddzielnymi instancjami (ramka<->pelny ekran).
+JNIEXPORT void JNICALL
+Java_com_aurora_player_projectm_ProjectMNative_loadPresetFile(JNIEnv* env, jobject, jlong handle,
+                                                                jstring path,
+                                                                jboolean smoothTransition) {
+    auto* ctx = toContext(handle);
+    if (ctx == nullptr || ctx->instance == nullptr) return;
+    const char* pathChars = env->GetStringUTFChars(path, nullptr);
+    if (pathChars == nullptr) return;
+    projectm_load_preset_file(ctx->instance, pathChars, smoothTransition == JNI_TRUE);
+    env->ReleaseStringUTFChars(path, pathChars);
+}
+
+// Realne kontrolki z API projectM (parameters.h) pod panel ustawien z Etapu 10 czesc 2 - swiadomie
+// TYLKO te trzy, bo to jedyne parametry API faktycznie odpowiadajace temu, co user opisal
+// ("reakcja na beat", "czulosc") - zaden fikcyjny suwak bez pokrycia w bibliotece.
+JNIEXPORT void JNICALL
+Java_com_aurora_player_projectm_ProjectMNative_setBeatSensitivity(JNIEnv*, jobject, jlong handle,
+                                                                   jfloat sensitivity) {
+    auto* ctx = toContext(handle);
+    if (ctx == nullptr || ctx->instance == nullptr) return;
+    projectm_set_beat_sensitivity(ctx->instance, sensitivity);
+}
+
+JNIEXPORT void JNICALL
+Java_com_aurora_player_projectm_ProjectMNative_setHardCutEnabled(JNIEnv*, jobject, jlong handle,
+                                                                  jboolean enabled) {
+    auto* ctx = toContext(handle);
+    if (ctx == nullptr || ctx->instance == nullptr) return;
+    projectm_set_hard_cut_enabled(ctx->instance, enabled == JNI_TRUE);
+}
+
+JNIEXPORT void JNICALL
+Java_com_aurora_player_projectm_ProjectMNative_setHardCutSensitivity(JNIEnv*, jobject, jlong handle,
+                                                                      jfloat sensitivity) {
+    auto* ctx = toContext(handle);
+    if (ctx == nullptr || ctx->instance == nullptr) return;
+    projectm_set_hard_cut_sensitivity(ctx->instance, sensitivity);
 }
 
 // Bez tego presety odwolujace sie do tekstur (Milkdrop Texture Pack) renderuja sie na czarno -
@@ -116,46 +150,6 @@ Java_com_aurora_player_projectm_ProjectMNative_addPcmInt16(JNIEnv* env, jobject,
         channels == 1 ? PROJECTM_MONO : PROJECTM_STEREO);
     // JNI_ABORT: nie odpisujemy z powrotem do jshortArray, bo tylko czytamy próbki wejściowe.
     env->ReleaseShortArrayElements(samples, data, JNI_ABORT);
-}
-
-JNIEXPORT jint JNICALL
-Java_com_aurora_player_projectm_ProjectMNative_playlistAddPath(JNIEnv* env, jobject, jlong handle,
-                                                                jstring path,
-                                                                jboolean recurseSubdirs) {
-    auto* ctx = toContext(handle);
-    if (ctx == nullptr || ctx->playlist == nullptr) return 0;
-    const char* pathChars = env->GetStringUTFChars(path, nullptr);
-    if (pathChars == nullptr) return 0;
-    uint32_t added = projectm_playlist_add_path(ctx->playlist, pathChars, recurseSubdirs == JNI_TRUE,
-                                                 /*allow_duplicates=*/false);
-    env->ReleaseStringUTFChars(path, pathChars);
-    return static_cast<jint>(added);
-}
-
-// Wymagane do przełączania trybów wizualizera (Etap 10, DESIGN.md) — playlistAddPath tylko
-// DOKLADA presety, więc zmiana zestawu (np. Ambient -> Particle) musi najpierw wyczyścić starą
-// zawartość playlisty.
-JNIEXPORT void JNICALL
-Java_com_aurora_player_projectm_ProjectMNative_playlistClear(JNIEnv*, jobject, jlong handle) {
-    auto* ctx = toContext(handle);
-    if (ctx == nullptr || ctx->playlist == nullptr) return;
-    projectm_playlist_clear(ctx->playlist);
-}
-
-JNIEXPORT void JNICALL
-Java_com_aurora_player_projectm_ProjectMNative_playlistSetShuffle(JNIEnv*, jobject, jlong handle,
-                                                                   jboolean shuffle) {
-    auto* ctx = toContext(handle);
-    if (ctx == nullptr || ctx->playlist == nullptr) return;
-    projectm_playlist_set_shuffle(ctx->playlist, shuffle == JNI_TRUE);
-}
-
-JNIEXPORT jint JNICALL
-Java_com_aurora_player_projectm_ProjectMNative_playlistPlayNext(JNIEnv*, jobject, jlong handle,
-                                                                 jboolean hardCut) {
-    auto* ctx = toContext(handle);
-    if (ctx == nullptr || ctx->playlist == nullptr) return 0;
-    return static_cast<jint>(projectm_playlist_play_next(ctx->playlist, hardCut == JNI_TRUE));
 }
 
 } // extern "C"

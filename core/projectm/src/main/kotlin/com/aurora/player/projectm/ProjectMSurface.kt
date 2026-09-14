@@ -2,12 +2,16 @@ package com.aurora.player.projectm
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -28,34 +32,46 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlin.random.Random
 
 /**
  * Punkt wejścia do wizualizera projectM w Compose. Celowo NIE montuje `AndroidView`/GLSurfaceView
- * dopóki [PresetInstaller] nie skończy jednorazowej ekstrakcji presetów z assets — inaczej
- * `onSurfaceCreated` (który czyta ścieżkę presetów tylko raz, przy tworzeniu) mógłby wystartować
- * zanim ścieżka jest gotowa, i wizualizer zostałby bez żadnego załadowanego presetu na starcie.
+ * dopóki [PresetInstaller] nie skończy jednorazowej ekstrakcji presetów z assets.
  *
- * Wołający (np. `NowPlayingScreen` przez `movableContentOf`) odpowiada za umieszczenie tego
- * composable w drzewie tylko wtedy, gdy [ProjectMEngine.isDeviceSupported] zwróciło true —
- * w przeciwnym razie GLSurfaceView z GLES < 3.1 może się nie stworzyć poprawnie.
+ * Etap 16 (DESIGN.md) — zgłoszony bug "przejście ramka->pełny ekran losuje inny preset": [mode]
+ * i [currentPresetPath] są teraz w pełni STEROWANE Z ZEWNĄTRZ (nie wewnętrzny stan jak wcześniej),
+ * bo dwie osobne instancje tego composable (ramka inline i nakładka pełnoekranowa) muszą dzielić
+ * dokładnie tę samą wartość, żeby użytkownik widział ten sam preset po zmianie rozmiaru — to
+ * wołający (`NowPlayingScreen`) trzyma ten stan i przekazuje go obu instancjom.
  *
- * @param initialMode tryb (Etap 10) na start — np. dobrany wg gatunku bieżącego utworu przez
- *   [ProjectMVisualizerMode.defaultForGenre]. Przełącznik chipów pod spodem pozwala go zmienić
- *   ręcznie w dowolnym momencie.
- * @param showModeSwitcher czy w ogóle pokazywać chipy — w małej ramce inline (Etap 9) nie ma na
- *   nie miejsca, mają sens dopiero na pełnym ekranie.
+ * @param mode/[onModeChange] tryb (Etap 10) — sterowany, nie wewnętrzny.
+ * @param currentPresetPath/[onPresetPathChange] który plik `.milk` jest aktualnie pokazywany;
+ *   `null` = "jeszcze nie wybrano", ten composable sam dobierze wtedy losowy z [mode] i zgłosi
+ *   przez [onPresetPathChange] (patrz [ensureValidPreset]).
+ * @param onTapCyclesPreset gdy true (Etap 16, zgłoszenie: "kolejne kliknięcie zmienia
+ *   wizualizację"), tap na powierzchni wizualizera (poza chipami/przyciskami) przechodzi do
+ *   kolejnego presetu z tej samej kategorii zamiast robić cokolwiek innego — nawigację między
+ *   trybami ekranu (ramka/pełny ekran/okładka) obsługuje wołający przez osobne przyciski.
  */
 @Composable
 fun ProjectMSurface(
     modifier: Modifier = Modifier,
-    initialMode: ProjectMVisualizerMode = ProjectMVisualizerMode.ALL,
+    mode: ProjectMVisualizerMode,
+    onModeChange: (ProjectMVisualizerMode) -> Unit,
+    currentPresetPath: String?,
+    onPresetPathChange: (String) -> Unit,
+    settings: ProjectMVisualizerSettings = ProjectMVisualizerSettings(),
+    onSettingsChange: (ProjectMVisualizerSettings) -> Unit = {},
     showModeSwitcher: Boolean = false,
+    showSettingsButton: Boolean = false,
+    onTapCyclesPreset: Boolean = true,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var presetsDir by remember { mutableStateOf<String?>(null) }
-    var currentMode by remember(initialMode) { mutableStateOf(initialMode) }
+    var showSettingsPanel by remember { mutableStateOf(false) }
     val viewRef = remember { mutableStateOf<ProjectMSurfaceView?>(null) }
 
     LaunchedEffect(Unit) {
@@ -65,28 +81,91 @@ fun ProjectMSurface(
     }
 
     val dir = presetsDir
+    val presetList = remember(dir, mode) {
+        dir?.let { PresetLibrary.listPresets(it, mode) }.orEmpty()
+    }
+
+    // Jeśli jeszcze nic nie wybrano, ALBO poprzedni wybór nie należy już do bieżącej kategorii
+    // (user zmienił tryb) — dobierz nowy, losowy preset z aktualnej listy i zgłoś w górę.
+    LaunchedEffect(presetList, currentPresetPath) {
+        if (presetList.isEmpty()) return@LaunchedEffect
+        if (currentPresetPath == null || currentPresetPath !in presetList) {
+            onPresetPathChange(presetList[Random.nextInt(presetList.size)])
+        }
+    }
+
+    // Ładuje bieżący preset do JUŻ zamontowanego widoku, gdy zmieni się z zewnątrz (ręczny tap,
+    // automatyczne przejście czasowe poniżej, albo świeży wybór z efektu wyżej).
+    LaunchedEffect(currentPresetPath) {
+        currentPresetPath?.let { viewRef.value?.jumpToPreset(it, smoothTransition = true) }
+    }
+
+    // Automatyczne przejście do kolejnego presetu po czasie z ustawień (Etap 10 część 2) —
+    // celowo liczone w Kotlinie, nie przez wewnętrzny timer projectM (patrz PresetLibrary.kt:
+    // playlist/timer projectM usunięty, bo nie dawał się zsynchronizować między dwiema
+    // instancjami). Klucz na currentPresetPath: każda zmiana (ręczna czy automatyczna) resetuje
+    // odliczanie, więc ręczny tap nie ginie zaraz potem pod automatycznym przejściem.
+    LaunchedEffect(currentPresetPath, settings.presetDurationSeconds, presetList) {
+        if (presetList.size <= 1 || currentPresetPath == null) return@LaunchedEffect
+        delay((settings.presetDurationSeconds * 1000).toLong())
+        val nextIndex = (presetList.indexOf(currentPresetPath) + 1).mod(presetList.size)
+        onPresetPathChange(presetList[nextIndex])
+    }
+
+    LaunchedEffect(settings) {
+        viewRef.value?.applySettings(settings)
+    }
+
     if (dir != null) {
         Box(modifier = modifier) {
             AndroidView(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        enabled = onTapCyclesPreset,
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                    ) {
+                        if (presetList.size > 1 && currentPresetPath != null) {
+                            val nextIndex = (presetList.indexOf(currentPresetPath) + 1).mod(presetList.size)
+                            onPresetPathChange(presetList[nextIndex])
+                        }
+                    },
                 factory = { ctx ->
                     ProjectMSurfaceView(ctx).apply {
                         installedAssetsDir = dir
-                        initialVisualizerMode = currentMode
+                        initialSettings = settings
+                        initialPresetPath = currentPresetPath
                     }.also { viewRef.value = it }
                 },
             )
 
-            if (showModeSwitcher) {
-                ModeSwitcher(
-                    selected = currentMode,
-                    onSelect = { mode ->
-                        currentMode = mode
-                        viewRef.value?.setVisualizerMode(mode)
-                    },
+            if (showModeSwitcher || showSettingsButton) {
+                Row(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .padding(bottom = 24.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (showModeSwitcher) {
+                        ModeSwitcher(selected = mode, onSelect = onModeChange)
+                    }
+                    if (showSettingsButton) {
+                        SettingsButton(
+                            modifier = Modifier.padding(start = 8.dp),
+                            onClick = { showSettingsPanel = !showSettingsPanel },
+                        )
+                    }
+                }
+            }
+
+            if (showSettingsPanel) {
+                VisualizerSettingsPanel(
+                    settings = settings,
+                    onSettingsChange = onSettingsChange,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(horizontal = 24.dp),
                 )
             }
         }
@@ -135,5 +214,22 @@ private fun ModeSwitcher(
                     .padding(horizontal = 14.dp, vertical = 8.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun SettingsButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(CircleShape)
+            .background(Color.Black.copy(alpha = 0.45f))
+            .clickable(onClick = onClick)
+            .padding(10.dp),
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Settings,
+            contentDescription = "Ustawienia wizualizera",
+            tint = Color.White,
+        )
     }
 }
