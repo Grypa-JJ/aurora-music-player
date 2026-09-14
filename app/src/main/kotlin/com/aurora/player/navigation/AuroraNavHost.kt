@@ -10,11 +10,13 @@ import androidx.navigation.compose.rememberNavController
 import com.aurora.player.genius.GeniusMixesScreen
 import com.aurora.player.library.LibraryScreen
 import com.aurora.player.library.LibraryViewModel
+import com.aurora.player.licenses.OpenSourceLicensesScreen
 import com.aurora.player.nowplaying.NowPlayingScreen
 
 private const val ROUTE_LIBRARY = "library"
 private const val ROUTE_NOW_PLAYING = "now_playing"
 private const val ROUTE_GENIUS_MIXES = "genius_mixes"
+private const val ROUTE_LICENSES = "licenses"
 
 /**
  * Jeden LibraryViewModel dzielony między ekranami (patrz DESIGN.md: single source of truth
@@ -49,10 +51,14 @@ fun AuroraNavHost(
                     onBack = { navController.popBackStack() },
                     sharedTransitionScope = this@SharedTransitionLayout,
                     animatedVisibilityScope = this@composable,
+                    onOpenLicenses = { navController.navigate(ROUTE_LICENSES) },
                 )
             }
             composable(ROUTE_GENIUS_MIXES) {
                 GeniusMixesScreen(viewModel = libraryViewModel)
+            }
+            composable(ROUTE_LICENSES) {
+                OpenSourceLicensesScreen(onBack = { navController.popBackStack() })
             }
         }
     }

@@ -17,11 +17,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -44,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
@@ -53,9 +57,13 @@ import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
 import com.aurora.player.eq.EqualizerSheet
 import com.aurora.player.library.LibraryViewModel
+import com.aurora.player.projectm.ProjectMEngine
+import com.aurora.player.projectm.ProjectMSurface
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import java.util.concurrent.TimeUnit
+
+private enum class VisualizerMode { AlbumArt, Inline, Fullscreen }
 
 /**
  * Odtwarzacz pełnoekranowy — patrz DESIGN.md sekcja 3.2. Tło i akcent koloru są wyprowadzone
@@ -73,7 +81,9 @@ fun NowPlayingScreen(
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
     albumArtSharedKey: Any = "album_art",
+    onOpenLicenses: (() -> Unit)? = null,
 ) {
+    val context = LocalContext.current
     val playbackState by viewModel.playbackState.collectAsState()
     val palette by viewModel.albumArtPalette.collectAsState()
     val tokens = LocalAuroraTokens.current
@@ -92,9 +102,40 @@ fun NowPlayingScreen(
     )
     val backgroundBrush = Brush.verticalGradient(listOf(backgroundTop, Color(0xFF06060A)))
     var showEqSheet by remember { mutableStateOf(false) }
-    var showVisualizer by remember { mutableStateOf(false) }
+    var visualizerMode by remember { mutableStateOf(VisualizerMode.AlbumArt) }
     val hazeState = rememberHazeState()
     val visualizerFrame by viewModel.visualizerFrame.collectAsState()
+
+    // GLES 3.1 to twardy wymóg projectM (patrz DESIGN.md Etap 9) — na słabszych/starszych
+    // urządzeniach (minSdk appki to 26, nie wszystkie mają GLES 3.1) appka po cichu spada na
+    // stary generatywny AuroraVisualizer zamiast crashować lub pokazywać czarny ekran.
+    val isProjectMSupported = remember { ProjectMEngine.isDeviceSupported(context) }
+
+    // ŚWIADOMIE bez movableContentOf: sprawdzone na żywo na emulatorze, że przeniesienie tego
+    // samego AndroidView między kontenerem inline (kwadrat) a pełnoekranowym nie wymusza
+    // ponownego layoutu — GLSurfaceView zostawał zablokowany na starym rozmiarze (996×996) nawet
+    // po przeniesieniu do pełnoekranowego Boxa (potwierdzone logiem onSurfaceChanged). Zamiast
+    // dalej gonić tę niedopracowaną kombinację AndroidView+movableContentOf, każdy tryb dostaje
+    // WŁASNĄ instancję — engine.create() jest już idempotentny (patrz ProjectMEngine.create()),
+    // więc koszt to tylko krótki restart bieżącego presetu przy przełączeniu ramka<->pełny ekran,
+    // nie crash ani zła rozdzielczość. To dokładnie fallback przewidziany w DESIGN.md Etap 9
+    // ("jeśli movableContentOf się nie sprawdzi, zaakceptuj koszt re-initu zamiast całej
+    // architektury") — tylko odkryty empirycznie zamiast z góry.
+    @Composable
+    fun VisualizerSurface(surfaceModifier: Modifier) {
+        if (isProjectMSupported) {
+            ProjectMSurface(modifier = surfaceModifier)
+        } else {
+            AuroraVisualizer(
+                bandMagnitudes = visualizerFrame.bandMagnitudes,
+                bassEnergy = visualizerFrame.bassEnergy,
+                overallEnergy = visualizerFrame.overallEnergy,
+                beatCount = visualizerFrame.beatCount,
+                accentColor = accentColor,
+                modifier = surfaceModifier,
+            )
+        }
+    }
 
     Box(modifier = modifier.fillMaxSize()) {
     Column(
@@ -117,6 +158,17 @@ fun NowPlayingScreen(
                     .clickable(onClick = onBack),
             )
             Spacer(modifier = Modifier.weight(1f))
+            if (onOpenLicenses != null) {
+                Icon(
+                    imageVector = Icons.Filled.Info,
+                    contentDescription = "Licencje open source",
+                    tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clickable(onClick = onOpenLicenses),
+                )
+                Spacer(modifier = Modifier.width(tokens.spacing.m))
+            }
             Icon(
                 imageVector = Icons.Filled.Tune,
                 contentDescription = "Equalizer",
@@ -139,26 +191,56 @@ fun NowPlayingScreen(
                 .clip(RoundedCornerShape(24.dp))
                 .background(MaterialTheme.colorScheme.surface)
                 .sharedElementOrSelf(sharedTransitionScope, animatedVisibilityScope, albumArtSharedKey)
-                .clickable { showVisualizer = true },
+                .clickable(enabled = visualizerMode != VisualizerMode.Fullscreen) {
+                    // Tap gdziekolwiek w ramce poza przyciskiem pełnego ekranu = przełącznik
+                    // okładka <-> wizualizer w miejscu (nie pełny ekran od razu, patrz DESIGN.md
+                    // Etap 9 — to zamierzona zmiana względem Etapu 8, gdzie tap od razu dawał
+                    // pełny ekran).
+                    visualizerMode = when (visualizerMode) {
+                        VisualizerMode.AlbumArt -> VisualizerMode.Inline
+                        else -> VisualizerMode.AlbumArt
+                    }
+                },
             contentAlignment = Alignment.Center,
         ) {
-            if (track?.albumArtUri != null) {
-                AsyncImage(
-                    model = track.albumArtUri,
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                )
+            when (visualizerMode) {
+                VisualizerMode.AlbumArt -> {
+                    if (track?.albumArtUri != null) {
+                        AsyncImage(
+                            model = track.albumArtUri,
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                    Icon(
+                        imageVector = Icons.Filled.GraphicEq,
+                        contentDescription = "Pokaż wizualizer",
+                        tint = Color.White.copy(alpha = 0.85f),
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(tokens.spacing.m)
+                            .size(22.dp),
+                    )
+                }
+                VisualizerMode.Inline -> {
+                    VisualizerSurface(Modifier.fillMaxSize())
+                    Icon(
+                        imageVector = Icons.Filled.Fullscreen,
+                        contentDescription = "Pełny ekran",
+                        tint = Color.White.copy(alpha = 0.9f),
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(tokens.spacing.m)
+                            .size(24.dp)
+                            .clickable { visualizerMode = VisualizerMode.Fullscreen },
+                    )
+                }
+                VisualizerMode.Fullscreen -> {
+                    // Sama treść wizualizera jest w tym momencie w nakładce pełnoekranowej
+                    // poniżej (ta sama, przeniesiona instancja przez movableContentOf) — ramka
+                    // zostaje pusta, żeby nie renderować dwóch kopii naraz.
+                }
             }
-
-            Icon(
-                imageVector = Icons.Filled.GraphicEq,
-                contentDescription = "Pokaż wizualizer na pełnym ekranie",
-                tint = Color.White.copy(alpha = 0.85f),
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(tokens.spacing.m)
-                    .size(22.dp),
-            )
         }
 
         Column(modifier = Modifier.padding(top = tokens.spacing.xl)) {
@@ -262,24 +344,22 @@ fun NowPlayingScreen(
         }
     }
 
-        // Pełnoekranowa nakładka — nie mały pasek/box. Tap gdziekolwiek = powrót.
-        // Patrz AuroraVisualizer.kt: świadomie tęczowy kolor, łamie zasadę "jeden akcent",
-        // bo to jedno miejsce w appce ma być czystym spektaklem na życzenie użytkownika.
-        if (showVisualizer) {
-            AuroraVisualizer(
-                bandMagnitudes = visualizerFrame.bandMagnitudes,
-                bassEnergy = visualizerFrame.bassEnergy,
-                overallEnergy = visualizerFrame.overallEnergy,
-                beatCount = visualizerFrame.beatCount,
-                accentColor = accentColor,
+        // Pełnoekranowa nakładka — tap gdziekolwiek zwija z powrotem do ramki (nie do okładki,
+        // to świadomy wybór UX, patrz DESIGN.md Etap 9). Ta sama instancja co w ramce inline
+        // Własna instancja (nie ta sama co w ramce inline) — patrz komentarz przy
+        // VisualizerSurface wyżej: świadomie bez movableContentOf po testach na emulatorze.
+        if (visualizerMode == VisualizerMode.Fullscreen) {
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black)
                     .clickable(
                         indication = null,
                         interactionSource = remember { MutableInteractionSource() },
-                    ) { showVisualizer = false },
-            )
+                    ) { visualizerMode = VisualizerMode.Inline },
+            ) {
+                VisualizerSurface(Modifier.fillMaxSize())
+            }
         }
     }
 }

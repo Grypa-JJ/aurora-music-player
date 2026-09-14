@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd" xmlns="http://maven.apache.org/POM/4.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <!-- This module was also published with a richer model, Gradle metadata,  -->
+  <!-- which should be used instead. Do not delete the following line which  -->
+  <!-- is to indicate to Gradle or any Gradle module metadata file consumer  -->
+  <!-- that they should prefer consuming it instead. -->
+  <!-- do_not_remove: published-with-gradle-metadata -->
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>net.protyposis.projectm-unofficial</groupId>
+  <artifactId>projectm-android</artifactId>
+  <version>4.1.7</version>
+  <packaging>pom</packaging>
+  <name>projectM Android Native Library</name>
+  <description>Android native library package for projectM music visualizer</description>
+  <url>https://github.com/projectM-visualizer/projectm</url>
+  <licenses>
+    <license>
+      <name>GNU Lesser General Public License v2.1</name>
+      <url>https://github.com/projectM-visualizer/projectm/blob/master/LICENSE.txt</url>
+    </license>
+  </licenses>
+  <developers>
+    <developer>
+      <name>projectM Team</name>
+      <url>https://github.com/projectM-visualizer</url>
+    </developer>
+  </developers>
+  <scm>
+    <connection>scm:git:git://github.com/projectM-visualizer/projectm.git</connection>
+    <developerConnection>scm:git:ssh://github.com/projectM-visualizer/projectm.git</developerConnection>
+    <url>https://github.com/projectM-visualizer/projectm</url>
+  </scm>
+</project>

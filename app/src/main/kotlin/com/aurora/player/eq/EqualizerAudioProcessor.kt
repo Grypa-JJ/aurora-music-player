@@ -6,6 +6,7 @@ import androidx.media3.common.audio.BaseAudioProcessor
 import com.aurora.player.domain.model.EqDefaults
 import com.aurora.player.domain.model.EqState
 import com.aurora.player.domain.repository.EqRepository
+import com.aurora.player.projectm.ProjectMPcmBridge
 import com.aurora.player.visualizer.AudioVisualizerAnalyzer
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -21,7 +22,10 @@ import java.nio.ByteOrder
  *
  * Przy okazji zasila [AudioVisualizerAnalyzer] próbką zmiksowaną do mono (po EQ, czyli dokładnie
  * to, co faktycznie słychać) — jeden przebieg po buforze robi obie rzeczy naraz, więc wizualizer
- * nie kosztuje osobnego przejścia po danych PCM.
+ * nie kosztuje osobnego przejścia po danych PCM. Ta sama zmiksowana do mono próbka trafia też do
+ * [ProjectMPcmBridge] (Etap 9, DESIGN.md) — projectM dostaje dokładnie to samo źródło co stary
+ * wizualizer widmowy, tylko w formacie surowego PCM zamiast już policzonych pasm. Gdy nikt nie
+ * słucha (ekran wizualizera niewidoczny), `dispatch()` jest tanim no-opem.
  */
 class EqualizerAudioProcessor(
     private val eqRepository: EqRepository,
@@ -32,6 +36,7 @@ class EqualizerAudioProcessor(
     private var channelFilters: Array<Array<BiquadFilter>> = emptyArray()
     private var appliedBandGains: List<Float> = emptyList()
     private var appliedEnabled = false
+    private var projectMPcmScratch: ShortArray = ShortArray(0)
 
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT) {
@@ -90,6 +95,12 @@ class EqualizerAudioProcessor(
         val inputShorts = inputBuffer.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
         val outputShorts = output.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
 
+        val maxFrames = inputShorts.remaining() / channelCount
+        if (projectMPcmScratch.size < maxFrames) {
+            projectMPcmScratch = ShortArray(maxFrames)
+        }
+        var frameCountInBuffer = 0
+
         var channel = 0
         var frameSum = 0f
         while (inputShorts.hasRemaining()) {
@@ -105,12 +116,18 @@ class EqualizerAudioProcessor(
             frameSum += clamped
             channel++
             if (channel >= channelCount) {
-                visualizerAnalyzer.processSample(frameSum / channelCount, sampleRateHz)
+                val mixedDown = (frameSum / channelCount).coerceIn(-1f, 1f)
+                visualizerAnalyzer.processSample(mixedDown, sampleRateHz)
+                projectMPcmScratch[frameCountInBuffer] = (mixedDown * SHORT_SCALE).toInt().toShort()
+                frameCountInBuffer++
                 frameSum = 0f
                 channel = 0
             }
         }
         visualizerAnalyzer.publishSnapshot()
+        if (frameCountInBuffer > 0) {
+            ProjectMPcmBridge.dispatch(projectMPcmScratch, frameCountInBuffer, channels = 1)
+        }
 
         inputBuffer.position(inputBuffer.limit())
         output.position(outputShorts.position() * 2)

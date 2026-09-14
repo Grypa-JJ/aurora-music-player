@@ -6,3 +6,5 @@
 *.jpeg binary
 *.webp binary
 *.jar binary
+*.aar binary
+*.milk binary
