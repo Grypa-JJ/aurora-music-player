@@ -3,11 +3,11 @@ package com.aurora.player.nowplaying
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -96,8 +96,9 @@ fun NowPlayingScreen(
     val hazeState = rememberHazeState()
     val visualizerFrame by viewModel.visualizerFrame.collectAsState()
 
+    Box(modifier = modifier.fillMaxSize()) {
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .background(backgroundBrush)
             .hazeSource(state = hazeState)
@@ -138,31 +139,20 @@ fun NowPlayingScreen(
                 .clip(RoundedCornerShape(24.dp))
                 .background(MaterialTheme.colorScheme.surface)
                 .sharedElementOrSelf(sharedTransitionScope, animatedVisibilityScope, albumArtSharedKey)
-                .clickable { showVisualizer = !showVisualizer },
+                .clickable { showVisualizer = true },
             contentAlignment = Alignment.Center,
         ) {
-            Crossfade(targetState = showVisualizer, label = "albumArtOrVisualizer") { visualizerActive ->
-                if (visualizerActive) {
-                    AuroraVisualizer(
-                        bandMagnitudes = visualizerFrame.bandMagnitudes,
-                        bassEnergy = visualizerFrame.bassEnergy,
-                        overallEnergy = visualizerFrame.overallEnergy,
-                        beatCount = visualizerFrame.beatCount,
-                        accentColor = accentColor,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else if (track?.albumArtUri != null) {
-                    AsyncImage(
-                        model = track.albumArtUri,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
+            if (track?.albumArtUri != null) {
+                AsyncImage(
+                    model = track.albumArtUri,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
 
             Icon(
                 imageVector = Icons.Filled.GraphicEq,
-                contentDescription = if (showVisualizer) "Pokaż okładkę" else "Pokaż wizualizer",
+                contentDescription = "Pokaż wizualizer na pełnym ekranie",
                 tint = Color.White.copy(alpha = 0.85f),
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
@@ -268,6 +258,27 @@ fun NowPlayingScreen(
                 modifier = Modifier
                     .size(28.dp)
                     .clickable(onClick = viewModel::onSkipNext),
+            )
+        }
+    }
+
+        // Pełnoekranowa nakładka — nie mały pasek/box. Tap gdziekolwiek = powrót.
+        // Patrz AuroraVisualizer.kt: świadomie tęczowy kolor, łamie zasadę "jeden akcent",
+        // bo to jedno miejsce w appce ma być czystym spektaklem na życzenie użytkownika.
+        if (showVisualizer) {
+            AuroraVisualizer(
+                bandMagnitudes = visualizerFrame.bandMagnitudes,
+                bassEnergy = visualizerFrame.bassEnergy,
+                overallEnergy = visualizerFrame.overallEnergy,
+                beatCount = visualizerFrame.beatCount,
+                accentColor = accentColor,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                    ) { showVisualizer = false },
             )
         }
     }
