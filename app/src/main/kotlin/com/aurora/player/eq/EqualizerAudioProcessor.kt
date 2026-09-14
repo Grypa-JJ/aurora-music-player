@@ -10,6 +10,9 @@ import com.aurora.player.projectm.ProjectMPcmBridge
 import com.aurora.player.visualizer.AudioVisualizerAnalyzer
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.math.abs
+import kotlin.math.pow
+import kotlin.math.tanh
 
 /**
  * Media3 [BaseAudioProcessor] wstawiony w pipeline ExoPlayera (przez
@@ -37,6 +40,14 @@ class EqualizerAudioProcessor(
     private var appliedBandGains: List<Float> = emptyList()
     private var appliedEnabled = false
     private var projectMPcmScratch: ShortArray = ShortArray(0)
+
+    // Kompensacja headroomu — zgłoszenie: "equalizer jest zbyt mocny, ustawienie trybu
+    // powoduje trzeszczenie głośników". 10 kaskadowo połączonych filtrów peaking (Q=1, rozstaw
+    // ~1 oktawy) ma mocno nakładające się zbocza — kilka sąsiednich pasm podbitych naraz (np.
+    // "Bass Boost": +6/+5/+4/+2dB) daje w paśmie nakładania się WIĘKSZE realne wzmocnienie niż
+    // jakiekolwiek pojedyncze pasmo, bez żadnej korekty sygnał regularnie przekraczał 0dBFS i
+    // trafiał w twarde obcięcie (`coerceIn`) poniżej — właśnie to słychać jako trzask.
+    private var preampLinearGain = 1f
 
     override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
         if (inputAudioFormat.encoding != C.ENCODING_PCM_16BIT) {
@@ -68,6 +79,22 @@ class EqualizerAudioProcessor(
             }
         }
         appliedBandGains = gains
+        preampLinearGain = computePreampLinearGain(gains)
+    }
+
+    /**
+     * Szacunek headroomu potrzebnego, żeby nakładające się podbite pasma nie przycinały sygnału.
+     * Połowa sumy DODATNICH wzmocnień — nie pełna suma (zbyt pesymistyczne: zbocza filtrów nie
+     * nakładają się w 100%, więc realny wspólny szczyt jest niższy niż suma wszystkich pasm) ani
+     * tylko pojedynczy max (za mało: nie uwzględnia kilku sąsiednich podbitych pasm naraz, jak w
+     * "Bass Boost"). Współczynnik 0.5 dobrany na presetach z [EqPresets] — do doregulowania,
+     * gdyby któryś preset nadal przycinał.
+     */
+    private fun computePreampLinearGain(gainsDb: List<Float>): Float {
+        val positiveSum = gainsDb.filter { it > 0f }.sum()
+        if (positiveSum <= 0f) return 1f
+        val headroomDb = positiveSum * 0.5f
+        return 10f.pow(-headroomDb / 20f)
     }
 
     override fun queueInput(inputBuffer: ByteBuffer) {
@@ -109,8 +136,13 @@ class EqualizerAudioProcessor(
                 for (band in channelFilters[channel]) {
                     sample = band.process(sample)
                 }
+                sample *= preampLinearGain
             }
-            val clamped = sample.coerceIn(-1f, 1f)
+            // Miękkie ograniczenie zamiast twardego `coerceIn` — zgłoszenie: "trzeszczenie
+            // głośników". Poniżej progu sygnał jest bit-dokładnie nietknięty (brak zabarwienia
+            // normalnego materiału); dopiero rzadkie, chwilowe przekroczenia powyżej progu (mimo
+            // kompensacji preampem) dostają płynne nasycenie zamiast ostrego cyfrowego obcięcia.
+            val clamped = softClip(sample)
             outputShorts.put((clamped * SHORT_SCALE).toInt().toShort())
 
             frameSum += clamped
@@ -143,11 +175,28 @@ class EqualizerAudioProcessor(
     override fun onReset() {
         channelFilters = emptyArray()
         appliedBandGains = emptyList()
+        preampLinearGain = 1f
         visualizerAnalyzer.reset()
+    }
+
+    /**
+     * Poniżej [SoftClipThreshold] zwraca wejście BEZ ZMIAN (normalny materiał, nawet głośny,
+     * zostaje bit-dokładnie taki jak po EQ) — dopiero powyżej progu kompresuje resztę zakresu do
+     * [SoftClipThreshold, 1.0] przez tanh, więc rzadkie przekroczenie headroomu brzmi jak łagodne
+     * nasycenie zamiast trzasku twardego obcięcia.
+     */
+    private fun softClip(x: Float): Float {
+        val ax = abs(x)
+        if (ax <= SoftClipThreshold) return x
+        val sign = if (x < 0f) -1f else 1f
+        val excess = (ax - SoftClipThreshold) / (1f - SoftClipThreshold)
+        val compressed = SoftClipThreshold + (1f - SoftClipThreshold) * tanh(excess)
+        return sign * compressed
     }
 
     private companion object {
         const val BandQ = 1f
         const val SHORT_SCALE = 32768f
+        const val SoftClipThreshold = 0.85f
     }
 }

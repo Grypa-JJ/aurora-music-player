@@ -1,0 +1,640 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1500" viewBox="0 0 1800 1500">
+  <title>Premium Hi-Fi Music Player — Jetpack Compose UI Specification</title>
+  <desc>
+    A structured visual design specification for an Android premium music player.
+    Intended as a handoff artifact for Claude or another coding agent to implement in Jetpack Compose.
+    Screens: Library, Album, Now Playing + Visualizer, Audio Lab, Parametric EQ, Cloud Sources.
+    Design language: cinematic dark, premium Hi-Fi, restrained lavender accents, 8dp grid, large rounded cards.
+  </desc>
+
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#050713"/>
+      <stop offset="0.55" stop-color="#090B1B"/>
+      <stop offset="1" stop-color="#111027"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9B7CFF"/>
+      <stop offset="1" stop-color="#D2B7FF"/>
+    </linearGradient>
+    <linearGradient id="ambient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3D54FF"/>
+      <stop offset="0.5" stop-color="#9A4DFF"/>
+      <stop offset="1" stop-color="#D66CFF"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="18" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="soft">
+      <feGaussianBlur stdDeviation="8"/>
+    </filter>
+  </defs>
+
+  <!-- =========================================================
+       GLOBAL DESIGN TOKENS / HANDOFF NOTES
+       ========================================================= -->
+  <g id="design-system" font-family="Inter, Roboto, Arial, sans-serif">
+    <text x="70" y="45" fill="#FFFFFF" font-size="28" font-weight="700">PREMIUM HI-FI PLAYER — UI MASTER SPEC</text>
+    <text x="70" y="78" fill="#A9A9C7" font-size="15">
+      Implement in Jetpack Compose. Treat IDs below as semantic component names, not literal Android view IDs.
+    </text>
+
+    <rect x="70" y="105" width="1660" height="145" rx="24" fill="#0D1022" stroke="#242844"/>
+    <text x="95" y="137" fill="#D6C8FF" font-size="16" font-weight="700">DESIGN TOKENS</text>
+    <text x="95" y="165" fill="#B8BAD2" font-size="14">Background: #050713 → #111027</text>
+    <text x="95" y="188" fill="#B8BAD2" font-size="14">Surface: #0D1022 / Elevated: #14182D / Border: #242844</text>
+    <text x="95" y="211" fill="#B8BAD2" font-size="14">Primary accent: #9B7CFF / Text: #F7F5FF / Secondary text: #A9A9C7</text>
+    <text x="560" y="165" fill="#B8BAD2" font-size="14">Spacing: 8dp base grid</text>
+    <text x="560" y="188" fill="#B8BAD2" font-size="14">Corner radius: 24dp cards / 16dp controls / 999dp pills</text>
+    <text x="560" y="211" fill="#B8BAD2" font-size="14">Touch target: minimum 48dp</text>
+    <text x="980" y="165" fill="#B8BAD2" font-size="14">Typography: Roboto/Inter, clear hierarchy</text>
+    <text x="980" y="188" fill="#B8BAD2" font-size="14">Motion: 180–350ms, spring where appropriate</text>
+    <text x="980" y="211" fill="#B8BAD2" font-size="14">Never sacrifice readability for glass effects</text>
+
+    <!-- =======================================================
+         SCREEN 1 — LIBRARY
+         ======================================================= -->
+    <g id="screen-library" transform="translate(70,285)">
+      <text x="0" y="-18" fill="#FFFFFF" font-size="20" font-weight="700">01 — BIBLIOTEKA</text>
+      <rect width="500" height="900" rx="38" fill="url(#bg)" stroke="#30365A" stroke-width="2"/>
+      <text x="28" y="55" fill="#FFFFFF" font-size="25" font-weight="700">Nazwa aplikacji</text>
+      <text x="28" y="80" fill="#A9A9C7" font-size="12">Your Music. Deeper.</text>
+      <text x="442" y="58" fill="#D6C8FF" font-size="22">⚙</text>
+
+      <rect x="25" y="105" width="450" height="48" rx="18" fill="#10142A" stroke="#242844"/>
+      <text x="45" y="136" fill="#777B9B" font-size="14">⌕  Szukaj utworów, wykonawców, albumów...</text>
+
+      <rect x="25" y="174" width="450" height="42" rx="21" fill="#17183B"/>
+      <rect x="27" y="176" width="112" height="38" rx="19" fill="#5A42B8"/>
+      <text x="52" y="201" fill="#FFFFFF" font-size="12">Biblioteka</text>
+      <text x="165" y="201" fill="#A9A9C7" font-size="12">Playlisty</text>
+      <text x="265" y="201" fill="#A9A9C7" font-size="12">Ulubione</text>
+      <text x="365" y="201" fill="#A9A9C7" font-size="12">Radio AI</text>
+
+      <text x="25" y="255" fill="#FFFFFF" font-size="18" font-weight="700">Ostatnio odtwarzane</text>
+      <text x="395" y="255" fill="#9B7CFF" font-size="11">Wszystko</text>
+
+      <g id="recent-albums">
+        <rect x="25" y="275" width="130" height="130" rx="12" fill="#181C36"/>
+        <rect x="165" y="275" width="130" height="130" rx="12" fill="#24203B"/>
+        <rect x="305" y="275" width="130" height="130" rx="12" fill="#211B38"/>
+        <text x="25" y="426" fill="#F7F5FF" font-size="12">Album / wykonawca</text>
+        <text x="165" y="426" fill="#F7F5FF" font-size="12">Album / wykonawca</text>
+        <text x="305" y="426" fill="#F7F5FF" font-size="12">Album / wykonawca</text>
+      </g>
+
+      <text x="25" y="475" fill="#FFFFFF" font-size="18" font-weight="700">Twoja biblioteka</text>
+      <g id="library-categories" fill="#B8BAD2" font-size="14">
+        <text x="40" y="515">♟   Wykonawcy                                      ›</text>
+        <text x="40" y="555">▣   Albumy                                          ›</text>
+        <text x="40" y="595">♫   Utwory                                           ›</text>
+        <text x="40" y="635">◈   Gatunki                                          ›</text>
+      </g>
+
+      <text x="25" y="680" fill="#FFFFFF" font-size="18" font-weight="700">Źródła muzyki</text>
+      <text x="40" y="720" fill="#B8BAD2" font-size="14">☁ Google Drive                           1 284</text>
+      <text x="40" y="755" fill="#B8BAD2" font-size="14">☁ OneDrive                                847</text>
+      <text x="40" y="790" fill="#B8BAD2" font-size="14">▣ Ten telefon                              412</text>
+
+      <rect x="25" y="825" width="450" height="52" rx="20" fill="#0E1225" stroke="#242844"/>
+      <text x="48" y="857" fill="#F7F5FF" font-size="13">♫  Teraz odtwarzane — nazwa utworu</text>
+      <text x="410" y="857" fill="#9B7CFF" font-size="18">Ⅱ</text>
+      <text x="30" y="898" fill="#9B7CFF" font-size="11">BIBLIOTEKA</text>
+    </g>
+
+    <!-- SCREEN 2 — ALBUM -->
+    <g id="screen-album" transform="translate(650,285)">
+      <text x="0" y="-18" fill="#FFFFFF" font-size="20" font-weight="700">02 — ALBUM</text>
+      <rect width="500" height="900" rx="38" fill="url(#bg)" stroke="#30365A" stroke-width="2"/>
+      <text x="28" y="55" fill="#FFFFFF" font-size="24">‹</text>
+      <text x="442" y="55" fill="#D6C8FF" font-size="20">•••</text>
+
+      <rect x="100" y="85" width="300" height="300" rx="24" fill="#15172B" stroke="#30365A"/>
+      <path d="M145 235 L250 155 L355 235 L250 315 Z" fill="none" stroke="#A88CFF" stroke-width="3"/>
+      <text x="145" y="360" fill="#777B9B" font-size="11">ALBUM ART / IMAGE</text>
+
+      <text x="28" y="430" fill="#FFFFFF" font-size="24" font-weight="700">Nazwa albumu</text>
+      <text x="28" y="458" fill="#B7B0D8" font-size="16">Wykonawca</text>
+      <text x="28" y="485" fill="#8588A7" font-size="12">1973 • Rock • FLAC • 24-bit / 96 kHz</text>
+
+      <g id="album-actions">
+        <rect x="28" y="510" width="315" height="48" rx="24" fill="url(#accent)"/>
+        <text x="138" y="540" fill="#171027" font-size="14" font-weight="700">▶  Odtwórz</text>
+        <circle cx="390" cy="534" r="24" fill="#11152A" stroke="#33395D"/>
+        <text x="380" y="540" fill="#D6C8FF" font-size="17">↗</text>
+      </g>
+
+      <g id="track-list" font-size="13">
+        <text x="35" y="600" fill="#F7F5FF">01   Utwór pierwszy</text><text x="430" y="600" fill="#777B9B">3:21</text>
+        <text x="35" y="640" fill="#F7F5FF">02   Utwór drugi</text><text x="430" y="640" fill="#777B9B">4:12</text>
+        <text x="35" y="680" fill="#9B7CFF">03   Aktualnie odtwarzany</text><text x="430" y="680" fill="#9B7CFF">6:53</text>
+        <text x="35" y="720" fill="#F7F5FF">04   Utwór czwarty</text><text x="430" y="720" fill="#777B9B">5:08</text>
+        <text x="35" y="760" fill="#F7F5FF">05   Utwór piąty</text><text x="430" y="760" fill="#777B9B">4:44</text>
+      </g>
+
+      <rect x="25" y="825" width="450" height="52" rx="20" fill="#0E1225" stroke="#242844"/>
+      <text x="48" y="857" fill="#F7F5FF" font-size="13">♫  Teraz odtwarzane — nazwa utworu</text>
+    </g>
+
+    <!-- SCREEN 3 — NOW PLAYING / VISUALIZER -->
+    <g id="screen-now-playing" transform="translate(1230,285)">
+      <text x="0" y="-18" fill="#FFFFFF" font-size="20" font-weight="700">03 — TERAZ ODTWARZANE / WIZUALIZER</text>
+      <rect width="500" height="900" rx="38" fill="url(#bg)" stroke="#30365A" stroke-width="2"/>
+
+      <text x="28" y="50" fill="#D6C8FF" font-size="12">⌄</text>
+      <text x="165" y="50" fill="#FFFFFF" font-size="13" font-weight="700">TERAZ ODTWARZANE</text>
+      <text x="420" y="50" fill="#D6C8FF" font-size="18">•••</text>
+
+      <text x="45" y="88" fill="#FFFFFF" font-size="21" font-weight="700">Nazwa utworu</text>
+      <text x="45" y="113" fill="#B7B0D8" font-size="14">Wykonawca</text>
+      <text x="45" y="139" fill="#9B7CFF" font-size="11">FLAC   •   24-bit   •   96 kHz   •   Hi-Res</text>
+
+      <g id="audio-visualizer">
+        <circle cx="250" cy="360" r="145" fill="#2A1E66" opacity=".35" filter="url(#soft)"/>
+        <circle cx="250" cy="360" r="125" fill="none" stroke="url(#ambient)" stroke-width="5" opacity=".8" filter="url(#glow)"/>
+        <path d="M110 365 C145 280, 185 305, 220 350 S295 420, 340 330 S390 295, 405 360"
+              fill="none" stroke="url(#ambient)" stroke-width="5" opacity=".9"/>
+        <path d="M120 385 C160 315, 205 335, 240 370 S300 405, 350 350 S380 330, 400 380"
+              fill="none" stroke="#7E73FF" stroke-width="2" opacity=".55"/>
+        <circle cx="250" cy="360" r="88" fill="#070918" stroke="#262A4A"/>
+        <rect x="188" y="298" width="124" height="124" rx="10" fill="#171A30"/>
+        <text x="205" y="365" fill="#73779B" font-size="10">OKŁADKA</text>
+        <g opacity=".8" fill="#B59AFF">
+          <circle cx="95" cy="330" r="2"/><circle cx="410" cy="315" r="2"/><circle cx="130" cy="450" r="2"/>
+          <circle cx="370" cy="465" r="2"/><circle cx="85" cy="410" r="1.5"/><circle cx="425" cy="405" r="1.5"/>
+        </g>
+      </g>
+
+      <g id="quality-metrics">
+        <rect x="25" y="160" width="90" height="102" rx="16" fill="#0D1022" stroke="#242844"/>
+        <text x="40" y="185" fill="#9B9DBA" font-size="10">LUFS</text>
+        <text x="40" y="204" fill="#FFFFFF" font-size="14">−14.2</text>
+        <text x="40" y="229" fill="#9B9DBA" font-size="10">PEAK</text>
+        <text x="40" y="248" fill="#FFFFFF" font-size="14">−1.1 dB</text>
+      </g>
+
+      <text x="35" y="545" fill="#777B9B" font-size="11">2:36</text>
+      <text x="435" y="545" fill="#777B9B" font-size="11">6:53</text>
+      <rect x="35" y="525" width="430" height="4" rx="2" fill="#282C4C"/>
+      <rect x="35" y="525" width="165" height="4" rx="2" fill="#9B7CFF"/>
+      <circle cx="200" cy="527" r="6" fill="#C7AEFF"/>
+
+      <g id="playback-controls" fill="#F7F5FF">
+        <text x="55" y="602" font-size="25">↝</text>
+        <text x="145" y="602" font-size="28">|◀</text>
+        <circle cx="250" cy="590" r="34" fill="url(#accent)"/>
+        <text x="240" y="600" fill="#18112C" font-size="22">Ⅱ</text>
+        <text x="335" y="602" font-size="28">▶|</text>
+        <text x="425" y="602" font-size="25">↻</text>
+      </g>
+
+      <text x="28" y="650" fill="#A9A9C7" font-size="11">USB DAC • 24-bit / 96 kHz</text>
+      <text x="395" y="650" fill="#A9A9C7" font-size="11">Kolejka ›</text>
+
+      <rect x="25" y="690" width="450" height="155" rx="24" fill="#0D1022" stroke="#242844"/>
+      <text x="45" y="718" fill="#FFFFFF" font-size="14" font-weight="700">Tryb wizualizera</text>
+      <g id="visualizer-modes">
+        <rect x="42" y="738" width="125" height="36" rx="18" fill="#5A42B8"/>
+        <text x="73" y="761" fill="#FFFFFF" font-size="11">Ambient</text>
+        <rect x="178" y="738" width="125" height="36" rx="18" fill="#14182D"/>
+        <text x="208" y="761" fill="#B8BAD2" font-size="11">Spectrum</text>
+        <rect x="314" y="738" width="125" height="36" rx="18" fill="#14182D"/>
+        <text x="346" y="761" fill="#B8BAD2" font-size="11">Particle</text>
+      </g>
+      <text x="45" y="807" fill="#A9A9C7" font-size="10">Intensywność 70%     Czułość basu 80%     Reakcja na beat ✓</text>
+      <text x="45" y="829" fill="#777B9B" font-size="10">Kolory: Z okładki • FPS: 60 • Oszczędzanie baterii: OFF</text>
+    </g>
+
+    <!-- =======================================================
+         SCREEN 4 — AUDIO LAB
+         ======================================================= -->
+    <g id="screen-audio-lab" transform="translate(220,1220)">
+      <text x="0" y="-18" fill="#FFFFFF" font-size="20" font-weight="700">04 — AUDIO LAB</text>
+      <rect width="500" height="900" rx="38" fill="url(#bg)" stroke="#30365A" stroke-width="2"/>
+      <text x="28" y="52" fill="#FFFFFF" font-size="22" font-weight="700">Audio Lab</text>
+      <text x="28" y="75" fill="#A9A9C7" font-size="12">Pełna kontrola nad ścieżką audio</text>
+
+      <g id="signal-chain">
+        <rect x="25" y="105" width="450" height="85" rx="20" fill="#0D1022" stroke="#242844"/>
+        <text x="45" y="132" fill="#D6C8FF" font-size="12">ŹRÓDŁO</text>
+        <text x="45" y="156" fill="#FFFFFF" font-size="13">FLAC • 24-bit / 96 kHz • Wewnętrzna biblioteka</text>
+
+        <rect x="25" y="205" width="450" height="85" rx="20" fill="#0D1022" stroke="#242844"/>
+        <text x="45" y="232" fill="#D6C8FF" font-size="12">KOREKTOR (EQ)</text>
+        <text x="45" y="256" fill="#FFFFFF" font-size="13">Parametryczny • 10 pasm • Profil: własny</text>
+
+        <rect x="25" y="305" width="450" height="70" rx="20" fill="#0D1022" stroke="#242844"/>
+        <text x="45" y="333" fill="#D6C8FF" font-size="12">GAPLESS / CROSSFADE</text>
+        <text x="45" y="356" fill="#9B7CFF" font-size="13">Gapless: ON</text>
+
+        <rect x="25" y="390" width="450" height="70" rx="20" fill="#0D1022" stroke="#242844"/>
+        <text x="45" y="418" fill="#D6C8FF" font-size="12">NORMALIZACJA GŁOŚNOŚCI</text>
+        <text x="45" y="441" fill="#777B9B" font-size="13">ReplayGain: OFF</text>
+
+        <rect x="25" y="475" width="450" height="85" rx="20" fill="#0D1022" stroke="#242844"/>
+        <text x="45" y="502" fill="#D6C8FF" font-size="12">DAC / WYJŚCIE</text>
+        <text x="45" y="526" fill="#FFFFFF" font-size="13">USB Audio • 24-bit / 96 kHz • Bit-perfect</text>
+      </g>
+
+      <rect x="25" y="590" width="450" height="85" rx="20" fill="#101C24" stroke="#28594B"/>
+      <text x="48" y="625" fill="#77E0B7" font-size="13">✓ Gotowe</text>
+      <text x="48" y="650" fill="#B8BAD2" font-size="11">Brak resamplingu. Dźwięk przekazywany do DAC.</text>
+
+      <text x="28" y="720" fill="#FFFFFF" font-size="15" font-weight="700">Szybkie akcje</text>
+      <text x="40" y="755" fill="#B8BAD2" font-size="12">→ Otwórz EQ</text>
+      <text x="40" y="785" fill="#B8BAD2" font-size="12">→ Ustaw profil słuchawek</text>
+      <text x="40" y="815" fill="#B8BAD2" font-size="12">→ Analiza jakości pliku</text>
+    </g>
+
+    <!-- SCREEN 5 — EQ -->
+    <g id="screen-eq" transform="translate(770,1220)">
+      <text x="0" y="-18" fill="#FFFFFF" font-size="20" font-weight="700">05 — KOREKTOR PARAMETRYCZNY</text>
+      <rect width="500" height="900" rx="38" fill="url(#bg)" stroke="#30365A" stroke-width="2"/>
+      <text x="28" y="52" fill="#FFFFFF" font-size="22" font-weight="700">Korektor (EQ)</text>
+      <text x="28" y="75" fill="#A9A9C7" font-size="12">Precyzyjna korekcja 10 pasm</text>
+
+      <g id="eq-tabs">
+        <rect x="25" y="105" width="145" height="40" rx="20" fill="#5A42B8"/>
+        <text x="58" y="131" fill="#FFFFFF" font-size="11">Parametryczny</text>
+        <rect x="180" y="105" width="120" height="40" rx="20" fill="#14182D"/>
+        <text x="218" y="131" fill="#B8BAD2" font-size="11">Graficzny</text>
+        <rect x="310" y="105" width="140" height="40" rx="20" fill="#14182D"/>
+        <text x="348" y="131" fill="#B8BAD2" font-size="11">Presety</text>
+      </g>
+
+      <rect x="25" y="165" width="450" height="45" rx="18" fill="#10142A" stroke="#242844"/>
+      <text x="45" y="193" fill="#FFFFFF" font-size="12">EQ WŁĄCZONY</text>
+      <circle cx="435" cy="187" r="12" fill="#9B7CFF"/>
+
+      <g id="eq-graph">
+        <rect x="25" y="230" width="450" height="250" rx="20" fill="#0A0D1B" stroke="#242844"/>
+        <line x1="55" y1="355" x2="445" y2="355" stroke="#282C4C"/>
+        <path d="M55 310 C110 285, 145 345, 190 360 S270 355, 320 325 S390 290, 445 305"
+              fill="none" stroke="#A88CFF" stroke-width="4"/>
+        <g fill="#C7AEFF">
+          <circle cx="55" cy="310" r="5"/><circle cx="105" cy="292" r="5"/><circle cx="155" cy="345" r="5"/>
+          <circle cx="205" cy="360" r="5"/><circle cx="255" cy="358" r="5"/><circle cx="305" cy="335" r="5"/>
+          <circle cx="355" cy="310" r="5"/><circle cx="400" cy="295" r="5"/><circle cx="445" cy="305" r="5"/>
+        </g>
+        <text x="55" y="458" fill="#777B9B" font-size="10">31</text>
+        <text x="145" y="458" fill="#777B9B" font-size="10">125</text>
+        <text x="245" y="458" fill="#777B9B" font-size="10">500</text>
+        <text x="345" y="458" fill="#777B9B" font-size="10">2k</text>
+        <text x="430" y="458" fill="#777B9B" font-size="10">16k</text>
+      </g>
+
+      <text x="30" y="515" fill="#FFFFFF" font-size="13">Pasmo 1</text>
+      <text x="120" y="515" fill="#B8BAD2" font-size="12">31 Hz</text>
+      <text x="230" y="515" fill="#B8BAD2" font-size="12">Q 1.2</text>
+      <text x="330" y="515" fill="#B8BAD2" font-size="12">+3.0 dB</text>
+      <text x="30" y="555" fill="#FFFFFF" font-size="13">Pasmo 2</text>
+      <text x="120" y="555" fill="#B8BAD2" font-size="12">62 Hz</text>
+      <text x="230" y="555" fill="#B8BAD2" font-size="12">Q 0.9</text>
+      <text x="330" y="555" fill="#B8BAD2" font-size="12">+2.0 dB</text>
+      <text x="30" y="595" fill="#FFFFFF" font-size="13">Pasmo 3</text>
+      <text x="120" y="595" fill="#B8BAD2" font-size="12">125 Hz</text>
+      <text x="230" y="595" fill="#B8BAD2" font-size="12">Q 1.0</text>
+      <text x="330" y="595" fill="#B8BAD2" font-size="12">−1.5 dB</text>
+
+      <rect x="25" y="650" width="450" height="58" rx="20" fill="#17183B"/>
+      <text x="50" y="686" fill="#D6C8FF" font-size="12">Profil słuchawek: Własny        ›</text>
+      <text x="28" y="750" fill="#A9A9C7" font-size="11">Zmiany EQ powinny być słyszalne natychmiast i mieć funkcję A/B.</text>
+      <text x="28" y="780" fill="#777B9B" font-size="11">Obsłuż: preamp, peak/shelf/bell, Q, gain, frequency, reset.</text>
+    </g>
+
+    <!-- SCREEN 6 — CLOUD SOURCES -->
+    <g id="screen-cloud-sources" transform="translate(1320,1220)">
+      <text x="0" y="-18" fill="#FFFFFF" font-size="20" font-weight="700">06 — ŹRÓDŁA MUZYKI / CHMURY</text>
+      <rect width="500" height="900" rx="38" fill="url(#bg)" stroke="#30365A" stroke-width="2"/>
+      <text x="28" y="52" fill="#FFFFFF" font-size="22" font-weight="700">Źródła muzyki</text>
+      <text x="28" y="76" fill="#A9A9C7" font-size="12">Jedna biblioteka z wielu lokalizacji</text>
+
+      <g id="cloud-connectors">
+        <rect x="25" y="105" width="450" height="88" rx="20" fill="#0D1022" stroke="#242844"/>
+        <text x="48" y="135" fill="#FFFFFF" font-size="14">☁ Google Drive</text>
+        <text x="48" y="160" fill="#9B7CFF" font-size="11">✓ Połączono • /Muzyka • 1 284 utwory</text>
+        <text x="420" y="145" fill="#D6C8FF" font-size="16">›</text>
+
+        <rect x="25" y="205" width="450" height="88" rx="20" fill="#0D1022" stroke="#242844"/>
+        <text x="48" y="235" fill="#FFFFFF" font-size="14">☁ OneDrive</text>
+        <text x="48" y="260" fill="#777B9B" font-size="11">Nie połączono</text>
+        <text x="390" y="248" fill="#9B7CFF" font-size="11">Połącz</text>
+
+        <rect x="25" y="305" width="450" height="88" rx="20" fill="#0D1022" stroke="#242844"/>
+        <text x="48" y="335" fill="#FFFFFF" font-size="14">☁ Dropbox</text>
+        <text x="48" y="360" fill="#777B9B" font-size="11">Nie połączono</text>
+        <text x="390" y="348" fill="#9B7CFF" font-size="11">Połącz</text>
+
+        <rect x="25" y="405" width="450" height="88" rx="20" fill="#0D1022" stroke="#242844"/>
+        <text x="48" y="435" fill="#FFFFFF" font-size="14">🖥 NAS / WebDAV</text>
+        <text x="48" y="460" fill="#777B9B" font-size="11">Serwer domowy / własna biblioteka</text>
+        <text x="390" y="448" fill="#9B7CFF" font-size="11">Dodaj</text>
+
+        <rect x="25" y="505" width="450" height="88" rx="20" fill="#0D1022" stroke="#242844"/>
+        <text x="48" y="535" fill="#FFFFFF" font-size="14">📱 Ten telefon</text>
+        <text x="48" y="560" fill="#9B7CFF" font-size="11">✓ 412 utworów</text>
+        <text x="420" y="548" fill="#D6C8FF" font-size="16">›</text>
+      </g>
+
+      <rect x="25" y="620" width="450" height="95" rx="20" fill="#101C24" stroke="#28594B"/>
+      <text x="48" y="652" fill="#77E0B7" font-size="13">✓ Synchronizacja zakończona</text>
+      <text x="48" y="677" fill="#B8BAD2" font-size="11">Ostatnie skanowanie: 2 min temu</text>
+      <text x="48" y="700" fill="#777B9B" font-size="11">Nowe pliki są dodawane automatycznie.</text>
+
+      <text x="28" y="760" fill="#FFFFFF" font-size="15" font-weight="700">Zasada architektury</text>
+      <text x="28" y="790" fill="#B8BAD2" font-size="11">Cloud source → remoteId → lokalny indeks Room → unified library.</text>
+      <text x="28" y="816" fill="#777B9B" font-size="11">Streaming online + opcjonalne pobranie offline. Nie duplikuj biblioteki.</text>
+    </g>
+  </g>
+
+  <!-- =========================================================
+       MACHINE-READABLE IMPLEMENTATION CONTRACT
+       ========================================================= -->
+  <g id="implementation-contract">
+    <metadata>
+      <implementation>
+        <![CDATA[
+JETPACK COMPOSE IMPLEMENTATION CONTRACT
+
+1. ARCHITECTURE
+- Kotlin + Jetpack Compose + Material 3.
+- Prefer single-activity architecture with Navigation Compose.
+- State: ViewModel + StateFlow; UI must be stateless where practical.
+- Room is the local source of truth for indexed metadata and materialized recommendation tables.
+- Repository layer abstracts Local, Google Drive, OneDrive, Dropbox, NAS/WebDAV.
+- Media playback should be behind a PlayerRepository / Media3 adapter.
+- Do not put cloud API calls directly into composables.
+- Long-running scans/syncs belong in WorkManager.
+- Use Paging for very large libraries.
+- Use immutable UI state objects.
+
+2. CORE DOMAIN
+Track:
+- id
+- sourceId
+- remoteId
+- uri
+- title
+- artist
+- album
+- genre
+- year
+- durationMs
+- dateAdded
+- filenameNormalized
+- artworkUri
+- codec
+- bitDepth
+- sampleRate
+- bitrate
+- isAvailableOffline
+
+PlayEvent:
+- id
+- trackId
+- timestampStart
+- timestampEnd
+- playedMs
+- completed
+- dayOfWeek
+- hourOfDay
+- sourcePlaylistId
+
+SkipEvent:
+- id
+- trackId
+- timestamp
+- playedMs
+- dayOfWeek
+- hourOfDay
+
+TrackAffinity:
+- trackId
+- playCount
+- skipCount
+- avgCompletionRatio
+- lastPlayedAt
+- affinityScore [0..1]
+
+TrackCooccurrence:
+- trackIdA
+- trackIdB
+- count
+- lastSeenAt
+
+GeneratedMix:
+- id
+- seedTrackId
+- trackIdsOrdered
+- createdAt
+
+3. NAVIGATION
+Bottom navigation:
+- Library
+- Now Playing
+- Discover / AI Radio
+- Settings
+
+Secondary destinations:
+- Album
+- Artist
+- Queue
+- Audio Lab
+- Parametric EQ
+- Visualizer Settings
+- Cloud Sources
+- Track Details
+- Downloads / Offline
+
+4. PLAYER BEHAVIOR
+- Support gapless playback.
+- Support queue manipulation.
+- Support shuffle and repeat modes.
+- Expose current position and duration as StateFlow.
+- Persist playback state where useful.
+- Record PlayEvent when playback starts and finalize it on pause/stop/track change.
+- completed = true when roughly >=80% is played, but use a configurable threshold.
+- Record SkipEvent when user skips before completion.
+- Never block the main thread with audio metadata parsing.
+
+5. VISUALIZER
+Three modes:
+A) Ambient:
+- smooth waveform / halo around album art
+- reacts to low/mid/high frequency energy
+- palette can derive from artwork
+B) Spectrum:
+- 32–64 frequency bands
+- logarithmic frequency mapping
+- beat-reactive amplitude smoothing
+C) Particle:
+- particles respond to spectral energy and beat envelope
+
+Controls:
+- intensity
+- bass sensitivity
+- treble sensitivity
+- animation speed
+- blur
+- beat response
+- palette: artwork/custom/monochrome
+- FPS: 30/60
+- battery saver
+
+Implementation note:
+- Do not analyze raw PCM on the Compose UI thread.
+- Prefer Media3 audio effects / an AudioProcessor or dedicated DSP pipeline.
+- Visualizer state should be sampled/throttled for rendering.
+- Apply smoothing/attack-release to avoid jitter.
+
+6. AUDIO LAB
+Show a signal chain:
+Source → EQ → Crossfade/Gapless → ReplayGain → Output/DAC.
+
+Display:
+- codec
+- bit depth
+- sample rate
+- bitrate
+- output device
+- effective output sample rate
+- whether resampling is active
+- whether bit-perfect mode is available/active
+
+Important:
+- Never claim "bit-perfect" unless the actual Android audio path supports it.
+- Show "available" vs "active" states separately.
+
+7. PARAMETRIC EQ
+Data model per band:
+- enabled
+- filterType: PEAK, LOW_SHELF, HIGH_SHELF, LOW_PASS, HIGH_PASS
+- frequencyHz
+- gainDb
+- q
+
+Global:
+- preampDb
+- enabled
+- presetName
+
+UI:
+- graph
+- draggable nodes
+- band list
+- A/B comparison
+- reset
+- save preset
+- headphone profile
+
+8. CLOUD SOURCES
+Use an adapter interface:
+
+interface MusicSource {
+    val id: String
+    val type: SourceType
+    suspend fun listFiles(path: String): Flow<RemoteTrack>
+    suspend fun openStream(remoteId: String): InputStream
+    suspend fun download(remoteId: String, destination: Uri)
+    suspend fun refresh()
+}
+
+SourceType:
+- LOCAL
+- GOOGLE_DRIVE
+- ONEDRIVE
+- DROPBOX
+- WEBDAV
+- NAS
+
+Do not make Track.id globally meaningful across providers. Use:
+- sourceId
+- remoteId
+
+A cloud file should be indexed once into Room and represented in the unified library.
+
+9. OFFLINE
+Each track should expose:
+- ONLINE_ONLY
+- DOWNLOADING
+- OFFLINE_AVAILABLE
+- ERROR
+
+Downloads should be resumable where provider permits.
+Store files in app-managed storage.
+Do not expose provider credentials to the playback layer.
+
+10. RECOMMENDATIONS
+Do not calculate expensive recommendation scores in composables or SQL queries on every screen render.
+Recompute materialized tables in background.
+
+Initial scoring idea:
+affinity =
+  normalized(playCount)
+  * completionWeight
+  * recencyWeight
+  * (1 - skipPenalty)
+
+cooccurrence should consider:
+- count
+- order
+- completion
+- skips
+- recency
+- context (hour/day)
+- source playlist
+
+GeneratedMix:
+- seed track optional
+- candidate tracks ranked by affinity + cooccurrence + context
+- enforce artist/album diversity
+- avoid recently skipped tracks
+- avoid immediate repeats
+- materialize ordered IDs
+
+11. ACCESSIBILITY
+- Minimum 48dp touch targets.
+- Respect system font scaling.
+- Content descriptions for icon-only buttons.
+- Do not rely only on color.
+- Provide clear playback state for TalkBack.
+- Contrast should remain readable over album-art-derived backgrounds.
+
+12. RESPONSIVE TABLET DESIGN
+Use WindowSizeClass.
+Phone:
+- single column
+- bottom navigation
+- compact controls
+
+Tablet:
+- two-pane or three-pane layouts where useful
+- persistent queue / library rail
+- larger album art
+- Audio Lab can use master-detail layout
+- visualizer can occupy more canvas
+
+13. MOTION
+- 180–250ms standard transitions.
+- 300–500ms for album-art palette transitions.
+- Use spring animation for play/pause and visualizer controls.
+- Avoid infinite animations when app is backgrounded.
+- Pause visualizer when not visible to reduce battery consumption.
+
+14. UI PRINCIPLE
+The product must feel like a premium Hi-Fi instrument, not a Spotify clone.
+Prioritize:
+- hierarchy
+- album artwork
+- audio quality information
+- tactile playback controls
+- fast navigation
+- user ownership of local/cloud music
+- no ads
+- no unnecessary gamification
+        ]]>
+      </implementation>
+    </metadata>
+  </g>
+</svg>

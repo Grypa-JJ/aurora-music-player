@@ -1,5 +1,12 @@
 package com.aurora.player.projectm
 
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.BlurOn
+import androidx.compose.material.icons.filled.Grain
+import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.ui.graphics.vector.ImageVector
+
 /**
  * Tryby wizualizera z Etapu 10 (DESIGN.md) — świadomie NIE trzy osobne silniki renderujące
  * (to byłoby powtórzeniem błędu z Etapów 7-8, które user odrzucił jako niewystarczające), tylko
@@ -13,11 +20,13 @@ enum class ProjectMVisualizerMode(
     val displayName: String,
     /** null = cały skurowany zestaw (`presets/`), tak jak dotąd — bez zmian domyślnego zachowania. */
     val presetSubfolders: List<String>?,
+    /** Używana przez kompaktowy przycisk trybu (małe okno) — patrz `CompactModeButton` w ProjectMSurface.kt. */
+    val icon: ImageVector,
 ) {
-    ALL("Wszystkie", null),
-    AMBIENT("Ambient", listOf("Hypnotic", "Drawing")),
-    SPECTRUM("Spectrum", listOf("Waveform")),
-    PARTICLE("Particle", listOf("Particles", "Sparkle", "Supernova")),
+    ALL("Wszystkie", null, Icons.Filled.Apps),
+    AMBIENT("Ambient", listOf("Hypnotic", "Drawing"), Icons.Filled.BlurOn),
+    SPECTRUM("Spectrum", listOf("Waveform"), Icons.Filled.GraphicEq),
+    PARTICLE("Particle", listOf("Particles", "Sparkle", "Supernova"), Icons.Filled.Grain),
     ;
 
     companion object {

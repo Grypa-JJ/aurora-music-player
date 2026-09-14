@@ -12,7 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -89,7 +89,11 @@ fun GeniusMixesScreen(
                 LazyColumn(
                     contentPadding = PaddingValues(horizontal = tokens.spacing.m, vertical = tokens.spacing.s),
                 ) {
-                    items(mixes, key = { it.name }) { mix ->
+                    // Klucz po indeksie, NIE po nazwie — patrz komentarz w
+                    // GeniusRepositoryImpl.generateGeniusMixes: nawet po naprawie deduplikacji
+                    // nazw u źródła, klucz LazyColumn nie powinien nigdy zależeć od pola, którego
+                    // unikalności nie gwarantuje typ (GeniusMix.name to zwykły String).
+                    itemsIndexed(mixes) { index, mix ->
                         GeniusMixCard(
                             mix = mix,
                             onClick = { viewModel.onPlayMix(mix) },

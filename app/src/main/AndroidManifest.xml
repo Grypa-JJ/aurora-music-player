@@ -23,10 +23,21 @@
         android:theme="@style/Theme.Aurora"
         android:supportsRtl="true">
 
+        <!--
+            configChanges na MainActivity: bez tego obrót ekranu niszczył i odtwarzał całą
+            Activity (domyślne zachowanie Androida) — czyli też GLSurfaceView/kontekst EGL
+            wizualizera projectM oraz cały stan Compose trzymany przez `remember` (m.in.
+            `currentPresetPath`, `visualizerMode`). Zgłoszenie: "odwrócenie ekranu wykrzacza
+            wizualizer" — silnik dostawał świeży, pusty start w trakcie przejścia zamiast zwykłej
+            zmiany rozmiaru. Compose sam poprawnie re-layoutuje się na nowe wymiary (a
+            GLSurfaceView dostaje normalny `onSurfaceChanged`), więc appka nie potrzebuje tu
+            żadnej dodatkowej obsługi.
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.Aurora">
+            android:theme="@style/Theme.Aurora"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

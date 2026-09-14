@@ -82,12 +82,23 @@ class GeniusRepositoryImpl @Inject constructor(
         val affinityByTrackId = trackAffinityDao.getAll().associate { it.trackId to it.affinityScore }
         val clusters = GeniusClustering.cluster(allTracks, affinityByTrackId, k = maxMixes)
 
+        // Nazwy nadpisujemy dopiero PO wyliczeniu wszystkich — dwa różne klastry k-means mogą mieć
+        // ten sam dominujący gatunek (np. dwa klastry "rocka" różniące się rokiem/affinity), co przy
+        // realnej, różnorodnej bibliotece dawało DUPLIKAT nazwy miksu. `GeniusMixesScreen` używał
+        // nazwy jako klucza `LazyColumn` — duplikat klucza to twardy crash Compose
+        // (`IllegalArgumentException: Key ... was already used`), niewidoczny na małej testowej
+        // bibliotece (za mało utworów/gatunków, żeby dwa klastry kiedykolwiek się powtórzyły).
+        val usedNames = mutableMapOf<String, Int>()
         val clusterMixes = clusters.mapIndexed { index, cluster ->
+            val baseName = GeniusClustering.nameFor(cluster, index)
+            val occurrence = (usedNames[baseName] ?: 0) + 1
+            usedNames[baseName] = occurrence
+            val uniqueName = if (occurrence == 1) baseName else "$baseName ($occurrence)"
             val sortedByAffinity = cluster.sortedByDescending {
                 affinityByTrackId[it.id] ?: GeniusScoring.DEFAULT_AFFINITY
             }
             GeniusMix(
-                name = GeniusClustering.nameFor(cluster, index),
+                name = uniqueName,
                 tracks = sortedByAffinity.take(tracksPerMix),
             )
         }

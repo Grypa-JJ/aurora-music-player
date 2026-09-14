@@ -68,7 +68,17 @@ fun EqualizerSheet(
             Modifier
         },
     ) {
-        Column(modifier = Modifier.padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                // Zgłoszenie: panel equalizera nieczytelny nad wizualizerem pełnoekranowym —
+                // sam `hazeEffect`/`HazeMaterials.regular` daje za mało krycia nad jasną, ostrą
+                // grafiką (Milkdrop), przez co tekst/suwaki zlewają się z tłem. Blur z hazeEffect
+                // wciąż widoczny na krawędziach sheeta, ale treść ma teraz gwarantowane, prawie
+                // pełne krycie niezależnie od tego, co akurat renderuje się pod spodem.
+                .background(surfaceColor.copy(alpha = 0.94f))
+                .padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s),
+        ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,

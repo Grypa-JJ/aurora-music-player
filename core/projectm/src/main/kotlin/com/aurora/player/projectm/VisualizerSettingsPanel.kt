@@ -80,7 +80,19 @@ fun VisualizerSettingsPanel(
             Switch(
                 checked = settings.hardCutEnabled,
                 onCheckedChange = { onSettingsChange(settings.copy(hardCutEnabled = it)) },
-                colors = SwitchDefaults.colors(checkedTrackColor = MaterialTheme.colorScheme.primary),
+                // Pełne, świadome przypisanie kolorów zamiast dziedziczenia domyślnego
+                // Material3 wyglądu (zgłoszenie: Switch "nie wygląda profesjonalnie") —
+                // przezroczyste obwódki usuwają domyślny konturowy pierścień, kolory spójne
+                // z resztą panelu (biały kciuk, fioletowy tor zgodny z akcentem appki).
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = MaterialTheme.colorScheme.primary,
+                    checkedBorderColor = Color.Transparent,
+                    checkedIconColor = MaterialTheme.colorScheme.primary,
+                    uncheckedThumbColor = Color.White.copy(alpha = 0.8f),
+                    uncheckedTrackColor = Color.White.copy(alpha = 0.16f),
+                    uncheckedBorderColor = Color.Transparent,
+                ),
             )
         }
 

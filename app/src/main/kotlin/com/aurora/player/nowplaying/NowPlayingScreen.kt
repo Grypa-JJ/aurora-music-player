@@ -1,5 +1,8 @@
 package com.aurora.player.nowplaying
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
@@ -12,6 +15,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -37,6 +41,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -45,12 +50,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import coil3.compose.AsyncImage
 import com.aurora.player.designsystem.components.AuroraVisualizer
 import com.aurora.player.designsystem.components.sharedElementOrSelf
@@ -141,8 +151,30 @@ fun NowPlayingScreen(
         }
     }
 
+    // Zgłoszenie: "chcemy by wizualizer był widoczny cały czas, bez ikonek/godziny — jak
+    // fullscreen na YT" — immersywny tryb systemowy (paski wracają na przeciągnięcie od
+    // krawędzi, nie znikają na stałe) + blokada wygaszania ekranu, dokładnie jak w każdym
+    // odtwarzaczu wideo w pełnym ekranie. Aktywne TYLKO w Fullscreen — `onDispose` przywraca
+    // oba ustawienia przy wyjściu (zmiana trybu lub opuszczenie ekranu), więc nigdy nie zostają
+    // "przyklejone" poza wizualizerem.
+    val view = LocalView.current
+    DisposableEffect(visualizerMode) {
+        val window = context.findActivity()?.window
+        val insetsController = window?.let { WindowCompat.getInsetsController(it, view) }
+        if (visualizerMode == VisualizerMode.Fullscreen) {
+            insetsController?.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            insetsController?.hide(WindowInsetsCompat.Type.systemBars())
+            view.keepScreenOn = true
+        }
+        onDispose {
+            insetsController?.show(WindowInsetsCompat.Type.systemBars())
+            view.keepScreenOn = false
+        }
+    }
+
     @Composable
-    fun VisualizerSurface(surfaceModifier: Modifier) {
+    fun VisualizerSurface(surfaceModifier: Modifier, compactControls: Boolean, onTapCyclesPreset: Boolean = true) {
         if (isProjectMSupported) {
             ProjectMSurface(
                 modifier = surfaceModifier,
@@ -156,7 +188,11 @@ fun NowPlayingScreen(
                 // ramce, nie tylko na pełnym ekranie — nie ma już osobnego "trybu bez przełącznika".
                 showModeSwitcher = true,
                 showSettingsButton = true,
-                onTapCyclesPreset = true,
+                onTapCyclesPreset = onTapCyclesPreset,
+                // Etap 18, zgłoszenie: pełne chipy tekstowe "wyglądają na zbyt duże i
+                // niedopasowane" w małej ramce — tam dostają kompaktowy przycisk+menu zamiast
+                // rzędu 4 chipów (patrz komentarz przy `compactControls` w ProjectMSurface.kt).
+                compactControls = compactControls,
             )
         } else {
             AuroraVisualizer(
@@ -250,6 +286,35 @@ fun NowPlayingScreen(
                 },
             contentAlignment = Alignment.Center,
         ) {
+            // Etap 18, zgłoszenie: "silnik ma się uruchomić i wczytać już od początku piosenki,
+            // a dopiero po kliknięciu się pokazać" — wizualizer jest teraz ZAWSZE zamontowany od
+            // pojawienia się ekranu (także w trybie okładki, po prostu niewidoczny przez alpha=0),
+            // zamiast tworzyć kontekst GL i kompilować preset od zera dopiero PO tapnięciu. To
+            // była realna, kilkusekundowa przerwa (zweryfikowana na żywo: pusty czarny kwadrat
+            // przez ~3s po każdym powrocie z okładki). `onTapCyclesPreset` wyłączone w trybie
+            // okładki, żeby niewidoczny wizualizer nie podkradał tapów należących do gestu
+            // "pokaż wizualizer" obsługiwanego przez klikalność tego zewnętrznego Box. Wywołanie
+            // NIE jest warunkowane `isProjectMSupported` — `VisualizerSurface` samo przełącza się
+            // na lekki fallback `AuroraVisualizer` na starszych urządzeniach (patrz jej definicja
+            // wyżej), więc ten sam mechanizm pre-warmu obejmuje obie ścieżki.
+            //
+            // ŚWIADOMIE `size(1.dp)` zamiast samego `alpha(0f)` na pełnym rozmiarze: zgłoszone i
+            // zweryfikowane na żywo (emulator + telefon usera równolegle) — pełnowymiarowy,
+            // niewidoczny `AndroidView`/GLSurfaceView leżący DOKŁADNIE na obszarze klikalnym
+            // okładki przechwytywał tapy, zanim dotarły do `.clickable` tego zewnętrznego Box
+            // (interop AndroidView + nakładający się gest Compose to znany problem). Skurczenie do
+            // 1dp fizycznie usuwa nakładanie się obszarów dotykowych — silnik i załadowany preset
+            // zostają "ciepłe" (`engine.setWindowSize` przy odsłonięciu to tani resize viewportu,
+            // NIE ponowne tworzenie kontekstu GL/kompilacja presetu).
+            VisualizerSurface(
+                if (visualizerMode == VisualizerMode.AlbumArt) {
+                    Modifier.size(1.dp).alpha(0f)
+                } else {
+                    Modifier.fillMaxSize()
+                },
+                compactControls = true,
+                onTapCyclesPreset = visualizerMode != VisualizerMode.AlbumArt,
+            )
             when (visualizerMode) {
                 VisualizerMode.AlbumArt -> {
                     if (track?.albumArtUri != null) {
@@ -270,21 +335,25 @@ fun NowPlayingScreen(
                     )
                 }
                 VisualizerMode.Inline -> {
-                    VisualizerSurface(Modifier.fillMaxSize())
                     CloseVisualizerButton(
                         modifier = Modifier.align(Alignment.TopStart).padding(tokens.spacing.s),
                         onClick = { visualizerMode = VisualizerMode.AlbumArt },
                     )
-                    Icon(
-                        imageVector = Icons.Filled.Fullscreen,
-                        contentDescription = "Pełny ekran",
-                        tint = Color.White.copy(alpha = 0.9f),
+                    Box(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .padding(tokens.spacing.m)
-                            .size(24.dp)
+                            .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
                             .clickable { visualizerMode = VisualizerMode.Fullscreen },
-                    )
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Fullscreen,
+                            contentDescription = "Pełny ekran",
+                            tint = Color.White.copy(alpha = 0.9f),
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
                 }
                 VisualizerMode.Fullscreen -> {
                     // Treść wizualizera renderuje się w tym momencie we WŁASNEJ instancji w
@@ -407,7 +476,7 @@ fun NowPlayingScreen(
                     .fillMaxSize()
                     .background(Color.Black),
             ) {
-                VisualizerSurface(Modifier.fillMaxSize())
+                VisualizerSurface(Modifier.fillMaxSize(), compactControls = false)
                 CloseVisualizerButton(
                     modifier = Modifier.align(Alignment.TopStart).padding(tokens.spacing.m),
                     onClick = { visualizerMode = VisualizerMode.AlbumArt },
@@ -415,6 +484,13 @@ fun NowPlayingScreen(
             }
         }
     }
+}
+
+/** `LocalContext` w Compose bywa opakowany w `ContextWrapper` (motyw, itp.) — trzeba odwinąć. */
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
 
 private fun formatTime(ms: Long): String {
@@ -427,12 +503,19 @@ private fun formatTime(ms: Long): String {
 /** Jedyny sposób powrotu do okładki z wizualizera (ramka lub pełny ekran) — Etap 16, zgłoszenie. */
 @Composable
 private fun CloseVisualizerButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Icon(
-        imageVector = Icons.Filled.Close,
-        contentDescription = "Zamknij wizualizer",
-        tint = Color.White.copy(alpha = 0.9f),
+    // Box 48x48dp (minimalny touch target Material) wokół 28dp ikony — sam .size(28.dp).clickable()
+    // dawał obszar dotykowy poniżej zalecanego minimum.
+    Box(
         modifier = modifier
-            .size(28.dp)
+            .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
             .clickable(onClick = onClick),
-    )
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Close,
+            contentDescription = "Zamknij wizualizer",
+            tint = Color.White.copy(alpha = 0.9f),
+            modifier = Modifier.size(28.dp),
+        )
+    }
 }
