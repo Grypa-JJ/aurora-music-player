@@ -12,6 +12,14 @@ interface PlaybackHistoryRepository {
      */
     suspend fun recordPlaybackEnded(trackId: Long, playedMs: Long, durationMs: Long)
 
-    /** Dwa utwory zagrane bezpośrednio po sobie — lokalny odpowiednik collaborative filtering. */
-    suspend fun recordTransition(fromTrackId: Long, toTrackId: Long)
+    /**
+     * Dwa utwory zagrane bezpośrednio po sobie — lokalny odpowiednik collaborative filtering.
+     * Kierunkowe (from -> to, patrz DESIGN.md Etap 14) i ważone tym, jak dużą część [fromTrackId]
+     * faktycznie odsłuchano przed przejściem — dosłuchanie do końca i przejście dalej to dużo
+     * mocniejszy sygnał "ten utwór dobrze prowadzi do następnego" niż gwałtowny skip.
+     *
+     * @param fromPlayedMs ile odsłuchano [fromTrackId] przed przejściem na [toTrackId]
+     * @param fromDurationMs pełna długość [fromTrackId]
+     */
+    suspend fun recordTransition(fromTrackId: Long, toTrackId: Long, fromPlayedMs: Long, fromDurationMs: Long)
 }

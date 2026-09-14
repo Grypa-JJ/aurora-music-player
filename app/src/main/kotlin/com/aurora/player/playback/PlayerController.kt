@@ -92,7 +92,12 @@ class PlayerController @Inject constructor(
                     }
                     if (newTrack != null) {
                         scope.launch {
-                            playbackHistoryRepository.recordTransition(previousTrack.id, newTrack.id)
+                            playbackHistoryRepository.recordTransition(
+                                fromTrackId = previousTrack.id,
+                                toTrackId = newTrack.id,
+                                fromPlayedMs = playedMs,
+                                fromDurationMs = previousTrack.durationMs,
+                            )
                         }
                     }
                 }

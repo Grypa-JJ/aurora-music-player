@@ -6,6 +6,7 @@ import android.content.IntentSender
 import com.aurora.player.domain.model.Track
 import com.aurora.player.domain.model.TrackSource
 import com.aurora.player.domain.repository.CloudLibraryRepository
+import com.aurora.player.domain.util.TrackIdHasher
 import com.google.android.gms.auth.api.identity.AuthorizationClient
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
 import com.google.android.gms.auth.api.identity.AuthorizationResult
@@ -171,14 +172,15 @@ class GoogleDriveLibraryRepository @Inject constructor(
 
     /**
      * Track.id jest Long w całej apce (Room, Genius) — Drive daje opaque String, więc mapujemy
-     * przez stabilny (String.hashCode() jest częścią kontraktu języka, nie zmieni się) hash
-     * przesunięty poza zakres realnych MediaStore._ID, żeby nie kolidować z lokalnymi utworami.
-     * Ryzyko kolizji hashy jest teoretyczne przy realnej skali osobistej biblioteki w chmurze.
+     * przez [TrackIdHasher] (patrz DESIGN.md Etap 13) zamiast wcześniejszego ręcznego
+     * "offset + 31-bitowy String.hashCode()", który nie skalowałby się bezpiecznie na kolejne
+     * źródła chmurowe z Etapu 12 — dyskryminator "google_drive" daje temu źródłu własną
+     * przestrzeń skrótu, więc dowolna liczba przyszłych źródeł nie koliduje ze sobą nawzajem.
      */
     private fun cloudTrackId(driveFileId: String): Long =
-        CLOUD_ID_OFFSET + (driveFileId.hashCode().toLong() and 0x7FFFFFFFL)
+        TrackIdHasher.deriveId(SOURCE_DISCRIMINATOR, driveFileId)
 
     private companion object {
-        const val CLOUD_ID_OFFSET = 1_000_000_000_000L
+        const val SOURCE_DISCRIMINATOR = "google_drive"
     }
 }

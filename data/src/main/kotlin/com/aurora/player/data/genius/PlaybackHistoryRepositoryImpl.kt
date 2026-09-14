@@ -19,6 +19,9 @@ private const val COMPLETION_THRESHOLD = 0.8f
 /** Odtworzenia krótsze niż to traktujemy jako szum (przypadkowe stuknięcie), nie jako skip. */
 private const val MIN_MEANINGFUL_PLAYED_MS = 3_000L
 
+/** Waga przejścia po natychmiastowym skipie (completionRatio=0) — patrz [TrackCooccurrenceEntity]. */
+private const val MIN_TRANSITION_WEIGHT = 0.2f
+
 @Singleton
 class PlaybackHistoryRepositoryImpl @Inject constructor(
     private val playEventDao: PlayEventDao,
@@ -64,16 +67,28 @@ class PlaybackHistoryRepositoryImpl @Inject constructor(
         updateAffinity(trackId, completed, completionRatio, now)
     }
 
-    override suspend fun recordTransition(fromTrackId: Long, toTrackId: Long) {
+    override suspend fun recordTransition(
+        fromTrackId: Long,
+        toTrackId: Long,
+        fromPlayedMs: Long,
+        fromDurationMs: Long,
+    ) {
         if (fromTrackId == toTrackId) return
-        val trackIdA = minOf(fromTrackId, toTrackId)
-        val trackIdB = maxOf(fromTrackId, toTrackId)
-        val existing = trackCooccurrenceDao.get(trackIdA, trackIdB)
+        val completionRatio = if (fromDurationMs > 0L) {
+            (fromPlayedMs.toFloat() / fromDurationMs.toFloat()).coerceIn(0f, 1f)
+        } else {
+            0f
+        }
+        // Nawet natychmiastowy skip (completionRatio=0) niesie jakiś sygnał (użytkownik i tak
+        // wybrał wtedy TEN konkretny kolejny utwór) — pełne dosłuchanie waży niemal 2x mocniej.
+        val weightIncrement = MIN_TRANSITION_WEIGHT + (1f - MIN_TRANSITION_WEIGHT) * completionRatio
+
+        val existing = trackCooccurrenceDao.get(fromTrackId, toTrackId)
         trackCooccurrenceDao.upsert(
             TrackCooccurrenceEntity(
-                trackIdA = trackIdA,
-                trackIdB = trackIdB,
-                count = (existing?.count ?: 0) + 1,
+                fromTrackId = fromTrackId,
+                toTrackId = toTrackId,
+                weight = (existing?.weight ?: 0f) + weightIncrement,
                 lastSeenAt = System.currentTimeMillis(),
             ),
         )

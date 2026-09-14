@@ -8,13 +8,12 @@ import com.aurora.player.data.database.entity.TrackCooccurrenceEntity
 
 @Dao
 interface TrackCooccurrenceDao {
-    @Query("SELECT * FROM track_cooccurrence WHERE trackIdA = :trackId OR trackIdB = :trackId")
-    suspend fun forTrack(trackId: Long): List<TrackCooccurrenceEntity>
+    /** Co historycznie grało jako NASTĘPNE po [trackId] — kierunkowe, patrz encja. */
+    @Query("SELECT * FROM track_cooccurrence WHERE fromTrackId = :trackId")
+    suspend fun getFrom(trackId: Long): List<TrackCooccurrenceEntity>
 
-    @Query(
-        "SELECT * FROM track_cooccurrence WHERE (trackIdA = :a AND trackIdB = :b) OR (trackIdA = :b AND trackIdB = :a)",
-    )
-    suspend fun get(a: Long, b: Long): TrackCooccurrenceEntity?
+    @Query("SELECT * FROM track_cooccurrence WHERE fromTrackId = :from AND toTrackId = :to")
+    suspend fun get(from: Long, to: Long): TrackCooccurrenceEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: TrackCooccurrenceEntity)

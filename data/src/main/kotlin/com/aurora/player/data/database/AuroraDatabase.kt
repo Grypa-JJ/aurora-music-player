@@ -22,7 +22,7 @@ import com.aurora.player.data.database.entity.TrackCooccurrenceEntity
         TrackAffinityEntity::class,
         TrackCooccurrenceEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class AuroraDatabase : RoomDatabase() {
