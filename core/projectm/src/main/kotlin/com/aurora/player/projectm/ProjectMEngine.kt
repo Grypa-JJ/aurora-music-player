@@ -86,12 +86,21 @@ class ProjectMEngine {
         }
     }
 
-    /** Skanuje [directoryPath] (zwykły katalog na dysku — patrz [PresetInstaller]) w poszukiwaniu `.milk`. */
-    fun loadPresets(directoryPath: String, shuffle: Boolean = true) {
+    /**
+     * Czyści playlistę i skanuje w poszukiwaniu `.milk` tylko podkatalogi [mode]
+     * ([ProjectMVisualizerMode.presetSubfolders], `null` = cały [presetsRootDir] — patrz
+     * [PresetInstaller] dla pochodzenia tej ścieżki na dysku). Bezpieczne do wołania ponownie
+     * przy przełączeniu trybu w trakcie działania (Etap 10) — nie tylko przy starcie.
+     */
+    fun loadPresets(presetsRootDir: String, mode: ProjectMVisualizerMode, shuffle: Boolean = true) {
         lock.read {
             if (handle == 0L) return@read
-            val added = ProjectMNative.playlistAddPath(handle, directoryPath, true)
-            if (added <= 0) return@read
+            ProjectMNative.playlistClear(handle)
+
+            val paths = mode.presetSubfolders?.map { "$presetsRootDir/$it" } ?: listOf(presetsRootDir)
+            val totalAdded = paths.sumOf { path -> ProjectMNative.playlistAddPath(handle, path, true) }
+            if (totalAdded <= 0) return@read
+
             ProjectMNative.playlistSetShuffle(handle, shuffle)
             ProjectMNative.playlistPlayNext(handle, true)
         }

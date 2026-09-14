@@ -59,6 +59,7 @@ import com.aurora.player.eq.EqualizerSheet
 import com.aurora.player.library.LibraryViewModel
 import com.aurora.player.projectm.ProjectMEngine
 import com.aurora.player.projectm.ProjectMSurface
+import com.aurora.player.projectm.ProjectMVisualizerMode
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import java.util.concurrent.TimeUnit
@@ -121,10 +122,20 @@ fun NowPlayingScreen(
     // nie crash ani zła rozdzielczość. To dokładnie fallback przewidziany w DESIGN.md Etap 9
     // ("jeśli movableContentOf się nie sprawdzi, zaakceptuj koszt re-initu zamiast całej
     // architektury") — tylko odkryty empirycznie zamiast z góry.
+    // Etap 10: dobór domyślnego trybu wg gatunku bieżącego utworu — tylko punkt startowy,
+    // przełącznik chipów na pełnym ekranie i tak pozwala to nadpisać ręcznie w dowolnej chwili.
+    val defaultVisualizerMode = remember(track?.genre) {
+        ProjectMVisualizerMode.defaultForGenre(track?.genre)
+    }
+
     @Composable
-    fun VisualizerSurface(surfaceModifier: Modifier) {
+    fun VisualizerSurface(surfaceModifier: Modifier, showModeSwitcher: Boolean) {
         if (isProjectMSupported) {
-            ProjectMSurface(modifier = surfaceModifier)
+            ProjectMSurface(
+                modifier = surfaceModifier,
+                initialMode = defaultVisualizerMode,
+                showModeSwitcher = showModeSwitcher,
+            )
         } else {
             AuroraVisualizer(
                 bandMagnitudes = visualizerFrame.bandMagnitudes,
@@ -223,7 +234,8 @@ fun NowPlayingScreen(
                     )
                 }
                 VisualizerMode.Inline -> {
-                    VisualizerSurface(Modifier.fillMaxSize())
+                    // Bez przełącznika trybów - za mało miejsca w kwadratowej ramce, patrz DESIGN.md Etap 10.
+                    VisualizerSurface(Modifier.fillMaxSize(), showModeSwitcher = false)
                     Icon(
                         imageVector = Icons.Filled.Fullscreen,
                         contentDescription = "Pełny ekran",
@@ -358,7 +370,7 @@ fun NowPlayingScreen(
                         interactionSource = remember { MutableInteractionSource() },
                     ) { visualizerMode = VisualizerMode.Inline },
             ) {
-                VisualizerSurface(Modifier.fillMaxSize())
+                VisualizerSurface(Modifier.fillMaxSize(), showModeSwitcher = true)
             }
         }
     }

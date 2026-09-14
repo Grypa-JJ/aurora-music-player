@@ -22,6 +22,15 @@ class ProjectMSurfaceView @JvmOverloads constructor(
     @Volatile
     var installedAssetsDir: String? = null
 
+    /**
+     * Ustawiane bezpośrednio tylko PRZED zamontowaniem widoku, żeby pierwsze `onSurfaceCreated`
+     * od razu załadowało właściwy tryb — patrz `ProjectMSurface`. Po zamontowaniu zmiana trybu
+     * w locie idzie przez [setVisualizerMode] (osobna nazwa, bo Kotlin i tak wygenerowałby
+     * `setVisualizerMode` jako setter tej właściwości — kolizja JVM, gdyby nazwać ją tak samo).
+     */
+    @Volatile
+    var initialVisualizerMode: ProjectMVisualizerMode = ProjectMVisualizerMode.ALL
+
     private val pcmSink = ProjectMPcmSink { samples, frameCount, channels ->
         engine.addPcm(samples, frameCount, channels)
     }
@@ -31,6 +40,17 @@ class ProjectMSurfaceView @JvmOverloads constructor(
         preserveEGLContextOnPause = true
         setRenderer(InternalRenderer())
         renderMode = RENDERMODE_CONTINUOUSLY
+    }
+
+    /**
+     * Przełącza tryb wizualizera (Etap 10) w trakcie działania — wymaga wątku GL (jak każda
+     * operacja na playliście/instancji projectM), więc idzie przez `queueEvent`, nie wywołuje się
+     * bezpośrednio z wątku Compose.
+     */
+    fun setVisualizerMode(mode: ProjectMVisualizerMode) {
+        initialVisualizerMode = mode
+        val baseDir = installedAssetsDir ?: return
+        queueEvent { engine.loadPresets("$baseDir/presets", mode) }
     }
 
     /** Wołać z `DisposableEffect.onDispose` po stronie Compose. */
@@ -45,7 +65,7 @@ class ProjectMSurfaceView @JvmOverloads constructor(
             engine.setPresetDuration(PRESET_DURATION_SECONDS)
             installedAssetsDir?.let { baseDir ->
                 engine.setTextureSearchPath("$baseDir/textures")
-                engine.loadPresets("$baseDir/presets")
+                engine.loadPresets("$baseDir/presets", initialVisualizerMode)
             }
             ProjectMPcmBridge.attach(pcmSink)
         }

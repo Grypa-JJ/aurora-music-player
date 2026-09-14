@@ -132,6 +132,16 @@ Java_com_aurora_player_projectm_ProjectMNative_playlistAddPath(JNIEnv* env, jobj
     return static_cast<jint>(added);
 }
 
+// Wymagane do przełączania trybów wizualizera (Etap 10, DESIGN.md) — playlistAddPath tylko
+// DOKLADA presety, więc zmiana zestawu (np. Ambient -> Particle) musi najpierw wyczyścić starą
+// zawartość playlisty.
+JNIEXPORT void JNICALL
+Java_com_aurora_player_projectm_ProjectMNative_playlistClear(JNIEnv*, jobject, jlong handle) {
+    auto* ctx = toContext(handle);
+    if (ctx == nullptr || ctx->playlist == nullptr) return;
+    projectm_playlist_clear(ctx->playlist);
+}
+
 JNIEXPORT void JNICALL
 Java_com_aurora_player_projectm_ProjectMNative_playlistSetShuffle(JNIEnv*, jobject, jlong handle,
                                                                    jboolean shuffle) {
