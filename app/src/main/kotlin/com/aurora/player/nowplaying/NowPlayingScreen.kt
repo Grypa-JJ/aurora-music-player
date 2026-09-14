@@ -278,7 +278,12 @@ fun NowPlayingScreen(
                 .clip(RoundedCornerShape(24.dp))
                 .background(MaterialTheme.colorScheme.surface)
                 .sharedElementOrSelf(sharedTransitionScope, animatedVisibilityScope, albumArtSharedKey)
-                .clickable(enabled = visualizerMode == VisualizerMode.AlbumArt) {
+                // Etap 19, zgłoszenie: "wciąż można uruchomić wizualizer po zatrzymaniu utworu
+                // kliknięciem, że chodzi bez muzyki" — sam powrót do okładki na pauzie (efekt
+                // niżej) nie wystarczał, bo NIC nie blokowało ponownego ręcznego otwarcia przez
+                // tap, dopóki playback pozostawał zatrzymany. Gest pokazania wizualizera wymaga
+                // więc teraz OBU warunków: trybu okładki I aktywnego odtwarzania.
+                .clickable(enabled = visualizerMode == VisualizerMode.AlbumArt && playbackState.isPlaying) {
                     // Etap 16, zgłoszenie: tap na okładce pokazuje wizualizer w ramce; PONOWNY tap
                     // na samym wizualizerze (obsłużony wewnątrz `ProjectMSurface`, nie tutaj) zmienia
                     // preset zamiast wracać do okładki — powrót jest teraz TYLKO przez jawny X.

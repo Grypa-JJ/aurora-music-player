@@ -620,6 +620,96 @@ navigation/
   - Świadomie NIE zrobione w tej rundzie (zostają w Etapie 18): ulubione/wagowane presety, obracająca się płyta winylowa, tryb "ambient sleep" ze znikającymi przyciskami, bug logowania Google Drive, per-ekranowe (nie globalne) WindowInsets.
   - **Nierozstrzygnięte, wymaga dalszej pracy**: zgłoszenie o presetach kategorii "losowych zamiast tematycznych" (Ambient/Particle mają pokazywać wizualnie pasujące do nazwy presety) — foldery kuratora (`Hypnotic`/`Drawing`/`Waveform`/`Particles`/`Sparkle`/`Supernova`) istnieją i mają zdrową liczbę plików (34-219 każdy, zweryfikowane), więc to NIE jest pusty/błędny mapping, tylko realna rozbieżność jakościowa między tym, jak curator paczki "Cream of the Crop" nazwał foldery a tym, czego użytkownik intuicyjnie oczekuje po nazwie "Ambient"/"Particle" — wymaga ręcznego, wizualnego przeglądu presetów per folder i ewentualnej rekuracji mappingu, nie jest to coś do naprawienia samym czytaniem kodu.
 
+## Etap 20: Premium Hi-Fi UI — plan realizacji specyfikacji
+
+*Źródło: `premium_hifi_player_ui_master_spec.svg` (dodany do repo 2026-09-14) — spec wizualna + "machine-readable implementation contract" dla redesignu na 6 ekranach. Poniższa synteza opiera się na 7 równoległych przeglądach luk (design system, Biblioteka+Album, Now Playing+Wizualizer, Audio Lab+EQ, Źródła chmurowe+offline, silnik Genius, architektura/nawigacja/dostępność/responsywność), każdy czytający rzeczywisty kod, nie zgadujący.*
+
+### Podsumowanie
+
+Spec to spójna, dopracowana wizja "premium hi-fi" — i dobra wiadomość jest taka, że appka ma pod nią więcej fundamentu niż mogłoby się wydawać z samego brakującego UI: realny silnik DSP EQ w pipeline Media3, działający lokalny silnik rekomendacji (Genius) z materializowanymi tabelami Room, spójny design-token system, i jedno w pełni zintegrowane źródło chmurowe. Reszta to w większości brakujące ekrany/nawigacja nad już istniejącymi danymi (Track ma już album/artist/genre/year), a nie brakująca logika od zera. **Jest jednak jeden twardy KONFLIKT architektoniczny, który trzeba rozstrzygnąć przed jakąkolwiek pracą nad wizualizerem**: spec opisuje tryby Ambient/Spectrum/Particle jako WŁASNY, deterministyczny render (nasz kod kontroluje reaktywność 1:1), a obecna implementacja to projectM/Milkdrop, gdzie "tryby" są wyłącznie filtrem, który podzbiór cudzych plików `.milk` się ładuje — to była świadoma decyzja podjęta PO DWÓCH odrzuconych podejściach z własnym silnikiem (Etap 7 i 8, user ocenił oba jako niewystarczające). Dopisywanie kontrolek ze speca (bass/treble sensitivity, blur) do obecnego silnika w dużej mierze nie ma efektu, dopóki renderem rządzi cudzy shader presetu — więc zanim ruszy się cokolwiek w Now Playing, user musi jawnie powiedzieć, czy Milkdrop zostaje (rekomendacja poniżej), czy appka wraca do własnego silnika po raz trzeci.
+
+### Co już jest zrealizowane ze speca
+
+| Obszar | Co już działa |
+|---|---|
+| Design system | Skala spacing 8dp-grid, promienie zaokrągleń (24dp karty, 999dp pigułki), typografia Inter z jasną hierarchią, motion 300-500ms na zmianę palety Now Playing, spring na kontrolkach wizualizera, pauza wizualizera poza widocznością — wszystko realnie egzekwowane w kodzie, nie martwe tokeny |
+| Biblioteka + Album | Pływający mini-player ze shared-element transition, podświetlenie aktualnie granego utworu, scalanie lokalnej+chmurowej biblioteki w jedną listę, model `Track` ma już album/artist/genre/year jako fundament pod grupowanie |
+| Now Playing + Wizualizer | Ekran z okładką/wizualizerem w jednej ramce (tap→pokaż, tap→kolejny preset, X→powrót), 3 tryby Ambient/Spectrum/Particle jako chipy, poświata (halo) reagująca na energię basu, panel ustawień z suwakami czułości/prędkości presetów, analiza audio poprawnie POZA wątkiem UI (Media3 AudioProcessor), fallback generatywny na słabszych GPU |
+| Audio Lab + EQ | **Realny, działający silnik DSP** — biquad peaking EQ (RBJ cookbook) wpięty w pipeline Media3, 10 pasm, 5 presetów, auto-kompensacja headroomu + soft-clip przeciw trzaskom (naprawione w Etapie 19) |
+| Źródła chmurowe + offline | Google Drive w pełni zintegrowany (OAuth, streaming przez token, mapowanie na `Track`), hash id ze świadomym dyskryminatorem źródła żeby przyszłe źródła się nie kolidowały |
+| Silnik Genius | Materializowane tabele Room (`TrackAffinity`, `TrackCooccurrence`) aktualizowane przyrostowo, affinity liczone z play/skip, cooccurrence kierunkowa z wagą wg completion + wygaszaniem recency, scoring łączący affinity+cooccurrence+kontekst pory dnia, dywersyfikacja artysty/albumu w wyniku |
+| Architektura/nawigacja/a11y | Kotlin+Compose+M3, MVVM+StateFlow, podział modułowy app/core:designsystem/core:projectm/domain/data zgodny ze spec, Room jako trwały magazyn historii/rekomendacji, zamknięta pętla PlayEvent→SkipEvent→Affinity, zero reklam/chmury w silniku rekomendacji, 48dp touch target punktowo już wdrożony (Etap 19) |
+
+### Priorytetyzowany plan realizacji
+
+- [ ] **Etap 20a — Higiena dostępności i tokenów w całej appce** (tanie, bez decyzji architektonicznych, rób od razu)
+  - `MiniPlayerBar` 36dp→48dp touch target (dosłownie jedna liczba, ale to najczęściej widoczny element UI w appce).
+  - Uogólnienie dzisiejszego, punktowego `.defaultMinSize(48.dp)` (NowPlayingScreen/ProjectMSurface) na współdzielony komponent `AuroraIconButton` w `core:designsystem` (owijka M3 `IconButton`, który daje 48dp "za darmo"), i rollout do `LibraryScreen.kt` (dziś klikalne ikony 24-26dp), `EqualizerSheet.kt`, `GeniusMixesScreen.kt` — dziś zero użyć `IconButton(` w całym repo.
+  - Podłączenie `AuroraMotion.bouncy()/smooth()` (zdefiniowane, ale nieużywane) w `AmbientGlow.kt` i `VisualizerBars.kt`, które dziś ręcznie duplikują te same parametry `spring()` — czysty refaktor, zero zmiany zachowania.
+  - Przy okazji: dodać promień 16dp do `AuroraShapes` i zamienić ad-hoc `14.dp` w `VisualizerSettingsPanel.kt`/`ProjectMSurface.kt` na token.
+  - **Zakres:** `core/designsystem/.../theme/{Shape,AuroraTokens}.kt`, `core/designsystem/.../components/{MiniPlayerBar,AuroraIconButton(nowy)}.kt`, `core/projectm/.../{AmbientGlow,VisualizerBars,VisualizerSettingsPanel,ProjectMSurface}.kt`, `app/.../library/LibraryScreen.kt`, `app/.../eq/EqualizerSheet.kt`, `app/.../genius/GeniusMixesScreen.kt`.
+
+- [ ] **Etap 20b — Powłoka nawigacyjna (blocker dla większości reszty planu)**
+  - `NavigationBar` (bottom nav): Biblioteka / Teraz odtwarzane / Radio AI (przemianowana ikona Genius) / Ustawienia.
+  - Nowy ekran Ustawienia — nawet minimalny na start, żeby zakładka miała gdzie prowadzić.
+  - Rozszerzenie `AuroraNavHost` o trasy dla przyszłych ekranów drugorzędnych (album/artist/queue/audio_lab/cloud_sources/track_details), nawet jeśli część na razie prowadzi do zaślepek — żeby kolejne etapy (20c, 20f, 20h) nie musiały retrofitować nawigacji z dzisiejszego wzorca ręcznych callbacków.
+  - **Dlaczego teraz:** dziś appka ma tylko 4 trasy stosu okablowane ręcznie, zero `NavigationBar` w repo i zero ekranu Ustawień — to wprost blokuje "zamieszkanie" Audio Lab, Cloud Sources, Album i innych ekranów planowanych niżej. Koszt niski: `androidx.navigation.compose` już jest zależnością.
+  - **Zakres:** `app/.../navigation/AuroraNavHost.kt`, nowy `app/.../settings/SettingsScreen.kt`, `MainActivity.kt` (Scaffold z `bottomBar`).
+
+- [ ] **Etap 20c — Biblioteka: wyszukiwarka + ekran Albumu + grupowanie**
+  - Pasek wyszukiwania — filtr w pamięci po `allTracks`, zero zmian w warstwie danych.
+  - `AlbumScreen.kt` — grupowanie po `Track.album` (pole już istnieje), przycisk "odtwórz cały album", nawigacja z listy utworów ("idź do albumu"). To odblokowuje sensowną nawigację "w głąb" biblioteki, której dziś nie ma wcale (klik na utwór tylko go odtwarza).
+  - `ArtistsScreen`/`AlbumsScreen`/`GenresScreen` jako warianty tego samego wzorca grupowania po `artist`/`album`/`genre` — naturalna kontynuacja Album screen, bez nowej infrastruktury danych.
+  - **Dlaczego w tej kolejności:** Album screen ma nieproporcjonalnie duży wpływ (odblokowuje "idź do albumu" z każdego innego miejsca), a cała potrzebna informacja już jest w `Track` — to przebudowa UI na gotowych danych, nie nowa funkcja.
+  - **Zakres:** `app/.../library/{LibraryScreen,LibraryViewModel}.kt`, nowe `app/.../library/{AlbumScreen,ArtistsScreen,AlbumsScreen,GenresScreen}.kt`, trasy z 20b.
+
+- [ ] **Etap 20d — EQ: rozszerzenie modelu + trwałość (blocker dla UI EQ)**
+  - `EqBand`: dodać `filterType` (PEAK/LOW_SHELF/HIGH_SHELF/LOW_PASS/HIGH_PASS), `q`, `enabled` per pasmo.
+  - `BiquadFilter`: dopisać formuły RBJ dla shelf/low-pass/high-pass obok już zaimplementowanego peaking — plik już cytuje ten sam cookbook, to ograniczone ryzykiem rozszerzenie, nie budowa od zera.
+  - Trwały zapis EQ/presetów w Room — już zapowiedziany w komentarzu kodu jako "Etap 3, dojdzie razem z tabelami Genius", ale nigdy zrobiony; `EqRepositoryImpl` dziś trzyma stan tylko w pamięci.
+  - **Dlaczego teraz:** UI graficzne z przeciąganymi punktami, A/B, zapis presetu i profil słuchawek (spec) wszystkie zależą od tego modelu — bez tego "Zapisz preset" byłby funkcją cicho gubiącą dane po restarcie appki.
+  - **Zakres:** `domain/.../model/EqState.kt`, `app/.../eq/{BiquadFilter,EqualizerAudioProcessor,EqRepositoryImpl}.kt`, nowa encja/DAO w `data/.../database/`.
+
+- [ ] **Etap 20e — EQ UI + szybkie wygrane Genius** (niezależne od siebie, mogą iść równolegle)
+  - `EqualizerSheet`: wykres z przeciąganymi punktami (Canvas+krzywa) zamiast 10 suwaków, zakładki Parametryczny/Graficzny/Presety, porównanie A/B, zapis własnego presetu, profil słuchawek — wszystko na bazie modelu z 20d.
+  - Genius: **"avoid recently skipped tracks"** — `SkipEventDao` jest dziś zapisywane, ale nigdy odczytywane przez `GeniusRepositoryImpl`; jeden dodatkowy query + filtr, żaden nowy schemat. Najwyższy ROI z całego obszaru Genius.
+  - Genius: kontekst dnia tygodnia — `dayOfWeek` jest już zbierane na każdym `PlayEvent`/`SkipEvent`, ale nigdy czytane; naturalne rozszerzenie istniejącego mechanizmu godzinowego (`GeniusTimeContext`).
+  - **Zakres:** `app/.../eq/EqualizerSheet.kt`; `data/.../genius/GeniusRepositoryImpl.kt`, `domain/.../genius/{GeniusScoring,GeniusTimeContext}.kt`.
+
+- [ ] **Etap 20f — Naprawa Google Drive + minimalny ekran "Źródła muzyki"**
+  - Zdiagnozować i naprawić flow logowania Google Drive — zgłoszony, niesprawdzony bug z Etapu 18 (tap na koncie w natywnym pickerze nic nie robi, flow się nie kończy).
+  - `CloudSourcesScreen` z tylko 2 realnymi kartami (Google Drive + Ten telefon, z licznikami), reszta (OneDrive/Dropbox/NAS) wyszarzona/"wkrótce".
+  - **Dlaczego w tej kolejności:** rozbudowa o kolejnych dostawców na bazie flow logowania, który sam dziś nie działa na żywo, powielałaby ten sam błąd 3-4 razy zamiast raz go naprawić. Ekran nawet z 2 źródłami to tani, wysoki-ROI krok zgodności ze spec.
+  - **Zakres:** `app/.../cloud/GoogleDriveLibraryRepository.kt`, `app/.../library/LibraryScreen.kt`, nowy `app/.../cloud/CloudSourcesScreen.kt`, trasy z 20b.
+
+- [ ] **Etap 20g — Wizualizer: tanie usprawnienia w obecnym kierunku (Milkdrop)** — dopiero PO decyzji z sekcji "Pytania" niżej
+  - FPS/battery saver: zamiana `RENDERMODE_CONTINUOUSLY` na throttlowany render + jeden przełącznik w panelu.
+  - Rozszerzenie `AmbientGlow` o `midEnergy`/`trebleEnergy` — dane już istnieją w `VisualizerFrame`, to zmiana sygnatury + wag, żaden nowy DSP.
+  - Ograniczenie `AmbientGlow` wyłącznie do trybu Ambient (dziś renderowany globalnie we wszystkich trybach, wbrew intencji speca).
+  - **Świadomie NIE w tym etapie:** LUFS/peak, info o DAC/formacie (FLAC/24-bit/96kHz) — to nie są dopiski UI, tylko osobny kawałek pracy (patrz 20h).
+  - **Zakres:** `core/projectm/.../{ProjectMSurfaceView,AmbientGlow,VisualizerSettingsPanel}.kt`, `app/.../nowplaying/NowPlayingScreen.kt`.
+
+- [ ] **Etap 20h — Duże, odłożone kawałki** (każdy wymaga osobnej rundy i osobnej decyzji, patrz niżej)
+  - Metadane audio na `Track` (codec/bitDepth/sampleRate/bitrate/isAvailableOffline/sourceId/remoteId) — prerekwizyt blokujący zarówno Audio Lab jak i Offline; potem Audio Lab samo (kolejność: karta ŹRÓDŁO → łańcuch sygnału → Wyjście/DAC/bit-perfect na samym końcu, bo to najbardziej ryzykowna część zgodnie z ostrzeżeniem samej speca).
+  - Multi-cloud: interfejs `MusicSource` + `SourceType` enum + OneDrive/Dropbox/WebDAV/NAS + stany offline (`ONLINE_ONLY`/`DOWNLOADING`/`OFFLINE_AVAILABLE`/`ERROR`) + wznawialne pobrania przez WorkManager. Refaktor `CloudLibraryRepository`→`MusicSource` warto zrobić RAZEM z pierwszym nowym dostawcą, nie osobno wcześniej.
+  - Playlists/Favorites jako pierwszoklasowe encje domenowe (nowe tabele Room+DAO) — blokuje zakładki Playlisty/Ulubione i "source playlist" w cooccurrence Genius.
+  - LUFS/peak metering — realny DSP (klasa ITU-R BS.1770/EBU R128), zero istniejącego kodu dziś.
+  - Materializacja rankingu Genius (nie tylko affinity/cooccurrence) w Room+WorkManager — dziś liczona na żywo przy każdym wejściu na ekran.
+  - WindowSizeClass/tablet layout.
+  - **Zakres:** rozproszony po `domain/.../model/Track.kt`, nowe moduły/repozytoria per dostawca, `data/.../database/AuroraDatabase.kt` (nowe tabele), `core:projectm`/`app` DSP.
+
+### Pytania do usera / decyzje architektoniczne
+
+1. **KONFLIKT — silnik wizualizera.** Zostajemy przy projectM/Milkdrop (obecne, świadomie wybrane po dwóch odrzuconych podejściach z własnym silnikiem — Etap 7 i 8) i traktujemy Ambient/Spectrum/Particle jako kuratorowane kategorie nastroju, czy appka ma iść w stronę literalnego kontraktu ze speca (własny, w pełni kontrolowany render per tryb)? Rekomendacja: zostać przy Milkdrop, chyba że jest świeży sygnał od usera, że obecny wygląd go nie satysfakcjonuje — dwukrotne odrzucenie własnego silnika to silny sygnał w drugą stronę.
+2. **Paleta kolorów.** Nowy spec narzuca inną rodzinę hex (`#050713` granatowo-fioletowa, jawny trzeci poziom Surface/Elevated/Border, akcent `#9B7CFF`) niż obecna, wdrożona i przetestowana paleta z DESIGN.md 2.1 (`#0A0A0F`, akcent `#6C5CE7`, hierarchia przez alfę tekstu). Czy spec ma realnie zastąpić Color.kt (przemalowanie wszystkich 6 ekranów), czy to tylko inspiracja mockupu, a obecna paleta zostaje?
+3. **Które chmury faktycznie wchodzą w grę?** OneDrive/Dropbox wymagają rejestracji aplikacji deweloperskiej i OAuth per dostawca (to już był znany blocker w Etapie 12 DESIGN.md) — NAS/WebDAV nie wymaga konta chmurowego i jest prostszym protokołem, dobrym kandydatem na "drugie źródło" do testowania abstrakcji `MusicSource`. Ile z wymienionych w spec (Google Drive/OneDrive/Dropbox/NAS-WebDAV/iCloud/pCloud/Box/Plex/Jellyfin) user faktycznie chce realizować, a nie tylko pokazywać jako "wkrótce"?
+4. **Tablet/WindowSizeClass.** Appka jest dziś telefon-first, jednodostawcowa. Czy inwestować w layout tabletowy bez fizycznego tabletu/emulatora do testowania na żywo, czy odłożyć do konkretnej potrzeby?
+5. **Audio Lab / "bit-perfect".** Spec explicite ostrzega, żeby nigdy nie twierdzić "bit-perfect" bez pewności i rozdzielić dostępne/aktywne. W repo nie ma dziś żadnej integracji z `AudioDeviceInfo`/routingiem, która mogłaby to zweryfikować. Czy zaczynać tę część bez realnego DAC/urządzenia do testu na żywo, czy poczekać?
+6. **Playlists/Favorites.** To nowa, samodzielna funkcja domenowa (nowe tabele, nie przeróbka UI) — kiedy ją priorytetyzować względem reszty planu (blokuje zakładki ze speca i "source playlist" w Genius)?
+7. **LUFS/peak metering** — realny nowy DSP bez dzisiejszego fundamentu. Wart inwestycji teraz, czy odłożyć razem z resztą Audio Lab?
+8. **Kolejność Google Drive → multi-cloud** (Etap 20f przed 20h) — potwierdzić, że user się zgadza z naprawą istniejącego bugu logowania przed dokładaniem kolejnych dostawców, zamiast odwrotnie.
+9. **Materializacja rankingu Genius w tle (WorkManager).** Robić prewencyjnie teraz, czy czekać na realny sygnał wydajnościowy (appka działa dziś na niewielkiej skali, brak dowodów na problemy z wydajnością)?
+
 ### Jak zbudować / uruchomić
 
 ```bash
