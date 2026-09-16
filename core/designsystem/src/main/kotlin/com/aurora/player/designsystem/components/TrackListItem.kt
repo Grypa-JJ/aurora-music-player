@@ -9,9 +9,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -39,6 +41,7 @@ fun TrackListItem(
     isCurrentlyPlaying: Boolean,
     onClick: () -> Unit,
     onGeniusClick: (() -> Unit)? = null,
+    onMoreClick: (() -> Unit)? = null,
     isCloudTrack: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
@@ -125,6 +128,22 @@ fun TrackListItem(
                     .size(18.dp)
                     .clickable(onClick = onGeniusClick),
             )
+        }
+
+        if (onMoreClick != null) {
+            Box(
+                modifier = Modifier
+                    .defaultMinSize(minWidth = 40.dp, minHeight = 40.dp)
+                    .clickable(onClick = onMoreClick),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.MoreVert,
+                    contentDescription = "Więcej opcji",
+                    tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
+                    modifier = Modifier.size(20.dp),
+                )
+            }
         }
     }
 }

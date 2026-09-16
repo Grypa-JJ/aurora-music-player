@@ -4,16 +4,23 @@ import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.aurora.player.cloud.GoogleDriveLibraryRepository
+import com.aurora.player.cloud.WebDavLibraryRepository
 import com.aurora.player.color.AlbumArtColorExtractor
 import com.aurora.player.color.AlbumArtPalette
 import com.aurora.player.domain.model.EqState
 import com.aurora.player.domain.model.GeniusMix
+import com.aurora.player.domain.model.LyricsResult
 import com.aurora.player.domain.model.PlaybackState
+import com.aurora.player.domain.model.Playlist
 import com.aurora.player.domain.model.Track
 import com.aurora.player.domain.repository.EqRepository
+import com.aurora.player.domain.repository.FavoritesRepository
 import com.aurora.player.domain.repository.GeniusRepository
+import com.aurora.player.domain.repository.LyricsRepository
 import com.aurora.player.domain.repository.PlayerRepository
+import com.aurora.player.domain.repository.PlaylistRepository
 import com.aurora.player.domain.usecase.GetTracksUseCase
+import com.aurora.player.playback.SleepTimerController
 import com.aurora.player.visualizer.AudioVisualizerAnalyzer
 import com.aurora.player.visualizer.VisualizerFrame
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -29,12 +36,14 @@ import javax.inject.Inject
 data class LibraryUiState(
     val tracks: List<Track> = emptyList(),
     val cloudTracks: List<Track> = emptyList(),
+    val webDavTracks: List<Track> = emptyList(),
     val isLoading: Boolean = false,
     val isLoadingCloud: Boolean = false,
+    val isLoadingWebDav: Boolean = false,
     val hasPermission: Boolean = false,
 ) {
-    /** Biblioteka z urządzenia + z chmury złączona w jedną listę do wyświetlenia. */
-    val allTracks: List<Track> get() = tracks + cloudTracks
+    /** Biblioteka z urządzenia + z chmury + z NAS/WebDAV złączona w jedną listę do wyświetlenia. */
+    val allTracks: List<Track> get() = tracks + cloudTracks + webDavTracks
 }
 
 @HiltViewModel
@@ -46,12 +55,22 @@ class LibraryViewModel @Inject constructor(
     private val geniusRepository: GeniusRepository,
     private val visualizerAnalyzer: AudioVisualizerAnalyzer,
     private val googleDriveLibraryRepository: GoogleDriveLibraryRepository,
+    private val webDavLibraryRepository: WebDavLibraryRepository,
+    private val playlistRepository: PlaylistRepository,
+    private val favoritesRepository: FavoritesRepository,
+    private val sleepTimerController: SleepTimerController,
+    private val lyricsRepository: LyricsRepository,
 ) : ViewModel() {
 
     val isCloudSignedIn: StateFlow<Boolean> = googleDriveLibraryRepository.isSignedIn
     val cloudAccountEmail: StateFlow<String?> = googleDriveLibraryRepository.accountEmail
     val cloudLastError: StateFlow<String?> = googleDriveLibraryRepository.lastError
     fun clearCloudError() = googleDriveLibraryRepository.clearLastError()
+
+    val isWebDavConnected: StateFlow<Boolean> = webDavLibraryRepository.isConnected
+    val webDavServerLabel: StateFlow<String?> = webDavLibraryRepository.serverLabel
+    val webDavLastError: StateFlow<String?> = webDavLibraryRepository.lastError
+    fun clearWebDavError() = webDavLibraryRepository.clearLastError()
 
     /** Wizualizer widmowy Now Playing — patrz DESIGN.md, `AudioVisualizerAnalyzer`. */
     val visualizerFrame: StateFlow<VisualizerFrame> = visualizerAnalyzer.frame
@@ -74,6 +93,12 @@ class LibraryViewModel @Inject constructor(
     private val _isLoadingMixes = MutableStateFlow(false)
     val isLoadingMixes: StateFlow<Boolean> = _isLoadingMixes.asStateFlow()
 
+    private val _lyricsResult = MutableStateFlow<LyricsResult?>(null)
+    val lyricsResult: StateFlow<LyricsResult?> = _lyricsResult.asStateFlow()
+
+    private val _isLoadingLyrics = MutableStateFlow(false)
+    val isLoadingLyrics: StateFlow<Boolean> = _isLoadingLyrics.asStateFlow()
+
     init {
         viewModelScope.launch {
             playbackState
@@ -86,9 +111,28 @@ class LibraryViewModel @Inject constructor(
                     }
                 }
         }
+        // Napisy — DESIGN.md Etap 24. Ten sam wzorzec co paleta koloru wyżej: reaguje na zmianę
+        // ID bieżącego utworu, nie na każdą emisję playbackState (ta zmienia się co ~300ms przy
+        // odtwarzaniu — distinctUntilChanged po ID chroni przed odpytywaniem cache'u w kółko).
+        viewModelScope.launch {
+            playbackState
+                .map { it.currentTrack }
+                .distinctUntilChanged { old, new -> old?.id == new?.id }
+                .collect { track ->
+                    _lyricsResult.value = null
+                    if (track != null) {
+                        _isLoadingLyrics.value = true
+                        _lyricsResult.value = lyricsRepository.getLyrics(track)
+                        _isLoadingLyrics.value = false
+                    }
+                }
+        }
         // Sesja Google potrafi przetrwać restart appki (GoogleSignIn.getLastSignedInAccount) —
         // jeśli tak, dociągnij bibliotekę z chmury bez czekania na akcję użytkownika.
         if (isCloudSignedIn.value) refreshCloud()
+        // Dane logowania WebDAV są trwałe (SharedPreferences) — jeśli user już się kiedyś
+        // połączył, dociągnij bibliotekę od razu, tak samo jak Google Drive powyżej.
+        if (isWebDavConnected.value) refreshWebDav()
     }
 
     fun onPermissionResult(granted: Boolean) {
@@ -128,6 +172,11 @@ class LibraryViewModel @Inject constructor(
         playerRepository.skipToPrevious()
     }
 
+    /** Odtwarza dowolną listę utworów od [startIndex] — playlisty, ulubione, podgląd Geniusa. */
+    fun onPlayTracks(tracks: List<Track>, startIndex: Int = 0) {
+        playerRepository.playQueue(tracks, startIndex)
+    }
+
     /** Instant Mix z utworu-ziarna — patrz DESIGN.md sekcja 5.3. Seed gra jako pierwszy. */
     fun onGeniusClick(seedTrack: Track) {
         viewModelScope.launch {
@@ -161,10 +210,6 @@ class LibraryViewModel @Inject constructor(
             _geniusMixes.value = geniusRepository.generateGeniusMixes()
             _isLoadingMixes.value = false
         }
-    }
-
-    fun onPlayMix(mix: GeniusMix) {
-        playerRepository.playQueue(mix.tracks)
     }
 
     // --- Chmura (Google Drive) — patrz DESIGN.md, sekcja "Chmura" ---
@@ -204,4 +249,93 @@ class LibraryViewModel @Inject constructor(
         googleDriveLibraryRepository.signOut()
         _uiState.update { it.copy(cloudTracks = emptyList()) }
     }
+
+    // --- NAS/WebDAV — DESIGN.md Etap 12/22 ---
+
+    /** `true` = połączono i biblioteka odświeżona; `false` = błąd, patrz [webDavLastError]. */
+    fun onWebDavConnectClick(serverUrl: String, username: String, password: String, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val connected = webDavLibraryRepository.connect(serverUrl, username, password)
+            if (connected) refreshWebDav()
+            onResult(connected)
+        }
+    }
+
+    fun refreshWebDav() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingWebDav = true) }
+            val tracks = webDavLibraryRepository.refreshTracks()
+            _uiState.update { it.copy(webDavTracks = tracks, isLoadingWebDav = false) }
+        }
+    }
+
+    fun onWebDavDisconnect() {
+        webDavLibraryRepository.disconnect()
+        _uiState.update { it.copy(webDavTracks = emptyList()) }
+    }
+
+    // --- Playlisty — DESIGN.md Etap 22 ---
+
+    val playlists: StateFlow<List<Playlist>> = playlistRepository.playlists
+
+    fun onCreatePlaylist(name: String, onCreated: (Long) -> Unit = {}) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return
+        viewModelScope.launch {
+            val id = playlistRepository.createPlaylist(trimmed)
+            onCreated(id)
+        }
+    }
+
+    fun onRenamePlaylist(playlistId: Long, name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return
+        viewModelScope.launch { playlistRepository.renamePlaylist(playlistId, trimmed) }
+    }
+
+    fun onDeletePlaylist(playlistId: Long) {
+        viewModelScope.launch { playlistRepository.deletePlaylist(playlistId) }
+    }
+
+    fun onAddTrackToPlaylist(playlistId: Long, trackId: Long) {
+        viewModelScope.launch { playlistRepository.addTrack(playlistId, trackId) }
+    }
+
+    fun onRemoveTrackFromPlaylist(playlistId: Long, trackId: Long) {
+        viewModelScope.launch { playlistRepository.removeTrack(playlistId, trackId) }
+    }
+
+    fun onMoveTrackInPlaylist(playlistId: Long, fromIndex: Int, toIndex: Int) {
+        viewModelScope.launch { playlistRepository.moveTrack(playlistId, fromIndex, toIndex) }
+    }
+
+    /** Podgląd Geniusa → "Zapisz jako playlistę" (patrz GeniusMixPreviewScreen). */
+    fun onSaveMixAsPlaylist(mix: GeniusMix, onSaved: (Long) -> Unit = {}) {
+        viewModelScope.launch {
+            val id = playlistRepository.createPlaylist(mix.name)
+            mix.tracks.forEach { playlistRepository.addTrack(id, it.id) }
+            onSaved(id)
+        }
+    }
+
+    // --- Ulubione — DESIGN.md Etap 22 ---
+
+    val favoriteTrackIds: StateFlow<Set<Long>> = favoritesRepository.favoriteTrackIds
+
+    fun onToggleFavorite(trackId: Long) {
+        viewModelScope.launch { favoritesRepository.toggleFavorite(trackId) }
+    }
+
+    // --- Kolejka — DESIGN.md Etap 22 ---
+
+    fun onAddToQueue(track: Track) = playerRepository.addToQueue(track)
+    fun onRemoveFromQueue(index: Int) = playerRepository.removeFromQueue(index)
+    fun onMoveQueueItem(fromIndex: Int, toIndex: Int) = playerRepository.moveQueueItem(fromIndex, toIndex)
+    fun onPlayQueueIndex(index: Int) = playerRepository.playAt(index)
+
+    // --- Timer snu — DESIGN.md Etap 22 ---
+
+    val sleepTimerRemainingMs: StateFlow<Long?> = sleepTimerController.remainingMs
+    fun onStartSleepTimer(durationMs: Long) = sleepTimerController.start(durationMs)
+    fun onCancelSleepTimer() = sleepTimerController.cancel()
 }

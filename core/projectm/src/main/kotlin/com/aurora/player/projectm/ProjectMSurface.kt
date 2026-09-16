@@ -5,9 +5,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -90,6 +93,14 @@ fun ProjectMSurface(
     showSettingsButton: Boolean = false,
     onTapCyclesPreset: Boolean = true,
     compactControls: Boolean = false,
+    // Etap 22, zgłoszenie: "w wizualizerze na pełnym ekranie wszystkie ikony mają zniknąć po
+    // 5s bez kontaktu, jedno kliknięcie wybudza" — ten composable nie zna czasu bezczynności
+    // sam (to zależy od kontekstu wołającego: w ramce inline kontrolki mają być ZAWSZE widoczne,
+    // tylko pełny ekran ma tryb uśpienia), więc wołający steruje tym z zewnątrz. Gdy false: gear
+    // i przełącznik trybu znikają, a tap na powierzchni TYLKO budzi (przez [onInteraction]),
+    // nie cykluje presetu — dopiero KOLEJNY tap (gdy już widoczne) robi to co zwykle.
+    controlsVisible: Boolean = true,
+    onInteraction: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -163,7 +174,11 @@ fun ProjectMSurface(
                         indication = null,
                         interactionSource = remember { MutableInteractionSource() },
                     ) {
-                        if (presetList.size > 1 && currentPresetPath != null) {
+                        onInteraction()
+                        // Gdy kontrolki śpią, pierwszy tap TYLKO budzi (onInteraction wyżej) —
+                        // nie cykluje jednocześnie presetu, żeby "budzenie" nie było niezamierzoną
+                        // zmianą tego, co user oglądał.
+                        if (controlsVisible && presetList.size > 1 && currentPresetPath != null) {
                             val nextIndex = (presetList.indexOf(currentPresetPath) + 1).mod(presetList.size)
                             onPresetPathChange(presetList[nextIndex])
                         }
@@ -180,10 +195,19 @@ fun ProjectMSurface(
             // Przycisk ustawień: ZAWSZE top-end, w obu rozmiarach — patrz komentarz przy
             // sygnaturze funkcji. Osobny róg niż przełącznik trybu (dół), więc nie mogą się
             // zderzyć niezależnie od szerokości rzędu chipów.
-            if (showSettingsButton) {
+            // Etap 21/22, zgłoszenie: "kontrolki nie mają wchodzić pod pasek telefonu" —
+            // `windowInsetsPadding` tutaj jest no-opem w ramce inline (rodzic już skonsumował
+            // wcięcie, patrz NowPlayingScreen), a w nakładce pełnoekranowej (świadomie BEZ
+            // wcięcia na samym kontenerze, żeby tło mogło wylać się pod paski) to jedyne miejsce
+            // odsuwające te przyciski od realnych pasków systemowych — jeden kod na oba przypadki.
+            // `controlsVisible` (Etap 22): tryb uśpienia pełnego ekranu chowa te przyciski po 5s
+            // bezczynności — patrz komentarz przy parametrze. W ramce inline wołający zawsze
+            // przekazuje `true`, więc tam nic się nie zmienia.
+            if (showSettingsButton && controlsVisible) {
                 SettingsButton(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
+                        .windowInsetsPadding(WindowInsets.safeDrawing)
                         .padding(12.dp),
                     onClick = { showSettingsPanel = !showSettingsPanel },
                 )
@@ -192,13 +216,14 @@ fun ProjectMSurface(
             // Przełącznik trybu: chowany, gdy panel ustawień jest otwarty (panel go i tak
             // zastępuje merytorycznie — pokazywanie obu naraz to zbędny bałagan, nie oszczędność
             // miejsca), więc nie ma szans na kolizję z panelem.
-            if (showModeSwitcher && !showSettingsPanel) {
+            if (showModeSwitcher && !showSettingsPanel && controlsVisible) {
                 if (compactControls) {
                     CompactModeButton(
                         selected = mode,
                         onSelect = onModeChange,
                         modifier = Modifier
                             .align(Alignment.BottomStart)
+                            .windowInsetsPadding(WindowInsets.safeDrawing)
                             .padding(12.dp),
                     )
                 } else {
@@ -207,6 +232,7 @@ fun ProjectMSurface(
                         onSelect = onModeChange,
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
+                            .windowInsetsPadding(WindowInsets.safeDrawing)
                             .padding(bottom = 20.dp),
                     )
                 }

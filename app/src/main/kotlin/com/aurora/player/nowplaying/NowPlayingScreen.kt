@@ -13,28 +13,35 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Tune
@@ -77,8 +84,10 @@ import com.aurora.player.projectm.ProjectMEngine
 import com.aurora.player.projectm.ProjectMSurface
 import com.aurora.player.projectm.ProjectMVisualizerMode
 import com.aurora.player.projectm.ProjectMVisualizerSettings
+import com.aurora.player.sleep.SleepTimerSheet
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
+import kotlinx.coroutines.delay
 import java.util.concurrent.TimeUnit
 
 private enum class VisualizerMode { AlbumArt, Inline, Fullscreen }
@@ -100,6 +109,7 @@ fun NowPlayingScreen(
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
     albumArtSharedKey: Any = "album_art",
     onOpenLicenses: (() -> Unit)? = null,
+    onOpenQueue: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val playbackState by viewModel.playbackState.collectAsState()
@@ -132,6 +142,11 @@ fun NowPlayingScreen(
     val pulsedBackgroundTop = lerp(backgroundTop, accentColor, fraction = 0.22f * bassPulse)
     val backgroundBrush = Brush.verticalGradient(listOf(pulsedBackgroundTop, Color(0xFF06060A)))
     var showEqSheet by remember { mutableStateOf(false) }
+    var showSleepTimerSheet by remember { mutableStateOf(false) }
+    var showLyricsSheet by remember { mutableStateOf(false) }
+    val sleepTimerRemainingMs by viewModel.sleepTimerRemainingMs.collectAsState()
+    val lyricsResult by viewModel.lyricsResult.collectAsState()
+    val isLoadingLyrics by viewModel.isLoadingLyrics.collectAsState()
     var visualizerMode by remember { mutableStateOf(VisualizerMode.AlbumArt) }
     val hazeState = rememberHazeState()
 
@@ -188,8 +203,54 @@ fun NowPlayingScreen(
         }
     }
 
+    // Etap 22, zgłoszenie: "w pełnym ekranie wszystkie ikony mają zniknąć po 5s bez kontaktu,
+    // jedno kliknięcie wybudza". `interactionTick` to celowy wzorzec debounce (jak auto-advance
+    // presetu w ProjectMSurface) — każda interakcja go zwiększa, co RESTARTUJE poniższy efekt
+    // (anuluje stare opóźnienie, zaczyna nowe 5s od zera), więc kontrolki nie znikają w trakcie
+    // aktywnego oglądania, tylko po realnej ciszy.
+    var fullscreenControlsVisible by remember { mutableStateOf(true) }
+    var fullscreenInteractionTick by remember { mutableStateOf(0) }
+    LaunchedEffect(visualizerMode, fullscreenInteractionTick) {
+        if (visualizerMode != VisualizerMode.Fullscreen) return@LaunchedEffect
+        fullscreenControlsVisible = true
+        delay(5000)
+        fullscreenControlsVisible = false
+    }
+
+    // Etap 22, zgłoszenie: "po 25s bez kliknięcia w menu odtwarzanych, bez możliwości edycji
+    // i głupich przycisków, ekran robi się mleczny i widoczny jest tylko dobry, wyraźny widok
+    // wizualizera" — ten sam wzorzec debounce co wyżej, ale dla GŁÓWNEGO ekranu (nie
+    // pełnoekranowej nakładki, która ma własny, osobny 5s tryb uśpienia). Świadomie NIE liczone
+    // gdy `visualizerMode == Fullscreen` (ten ekran wtedy w ogóle nie jest widoczny).
+    var nowPlayingIdle by remember { mutableStateOf(false) }
+    var nowPlayingInteractionTick by remember { mutableStateOf(0) }
+    LaunchedEffect(visualizerMode, nowPlayingInteractionTick) {
+        if (visualizerMode == VisualizerMode.Fullscreen) return@LaunchedEffect
+        nowPlayingIdle = false
+        delay(25000)
+        // "widoczny jest tylko... widok wizualizera" — jeśli user zostawił appkę na samej
+        // okładce (nie tapnął, żeby pokazać wizualizer), bezczynność sama odsłania wizualizer,
+        // zamiast zatrzymać się na statycznej okładce. Wymaga isPlaying — ta sama zasada co
+        // ręczny gest (Etap 19: wizualizer nie startuje bez odtwarzania).
+        if (visualizerMode == VisualizerMode.AlbumArt && playbackState.isPlaying) {
+            visualizerMode = VisualizerMode.Inline
+        }
+        nowPlayingIdle = true
+    }
+    val nowPlayingChromeAlpha by animateFloatAsState(
+        targetValue = if (nowPlayingIdle) 0f else 1f,
+        animationSpec = tween(600),
+        label = "nowPlayingChromeAlpha",
+    )
+
     @Composable
-    fun VisualizerSurface(surfaceModifier: Modifier, compactControls: Boolean, onTapCyclesPreset: Boolean = true) {
+    fun VisualizerSurface(
+        surfaceModifier: Modifier,
+        compactControls: Boolean,
+        onTapCyclesPreset: Boolean = true,
+        controlsVisible: Boolean = true,
+        onInteraction: () -> Unit = {},
+    ) {
         if (isProjectMSupported) {
             ProjectMSurface(
                 modifier = surfaceModifier,
@@ -208,6 +269,8 @@ fun NowPlayingScreen(
                 // niedopasowane" w małej ramce — tam dostają kompaktowy przycisk+menu zamiast
                 // rzędu 4 chipów (patrz komentarz przy `compactControls` w ProjectMSurface.kt).
                 compactControls = compactControls,
+                controlsVisible = controlsVisible,
+                onInteraction = onInteraction,
             )
         } else {
             AuroraVisualizer(
@@ -227,10 +290,17 @@ fun NowPlayingScreen(
             .fillMaxSize()
             .background(backgroundBrush)
             .hazeSource(state = hazeState)
+            // Etap 21/22: wcięcie systemowe TYLKO na tej treści, nie na wspólnym korzeniu wyżej —
+            // nakładka pełnoekranowa wizualizera (na dole tego pliku) jest RODZEŃSTWEM tego
+            // Column, nie jego potomkiem, więc świadomie NIE dostaje tego wcięcia i może się
+            // wylewać pod paski systemowe (zgłoszenie: "wizualizer ma być na całym ekranie").
+            .windowInsetsPadding(WindowInsets.safeDrawing)
             .padding(tokens.spacing.m),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .alpha(nowPlayingChromeAlpha),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
@@ -253,6 +323,39 @@ fun NowPlayingScreen(
                 )
                 Spacer(modifier = Modifier.width(tokens.spacing.m))
             }
+            if (onOpenQueue != null) {
+                Icon(
+                    imageVector = Icons.Filled.QueueMusic,
+                    contentDescription = "Kolejka",
+                    tint = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clickable(onClick = onOpenQueue),
+                )
+                Spacer(modifier = Modifier.width(tokens.spacing.m))
+            }
+            Icon(
+                imageVector = Icons.Filled.Bedtime,
+                contentDescription = "Timer snu",
+                tint = if (sleepTimerRemainingMs != null) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onBackground
+                },
+                modifier = Modifier
+                    .size(24.dp)
+                    .clickable { showSleepTimerSheet = true },
+            )
+            Spacer(modifier = Modifier.width(tokens.spacing.m))
+            Icon(
+                imageVector = Icons.Filled.Lyrics,
+                contentDescription = "Tekst utworu",
+                tint = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier
+                    .size(24.dp)
+                    .clickable { showLyricsSheet = true },
+            )
+            Spacer(modifier = Modifier.width(tokens.spacing.m))
             Icon(
                 imageVector = Icons.Filled.Tune,
                 contentDescription = "Equalizer",
@@ -265,6 +368,25 @@ fun NowPlayingScreen(
 
         if (showEqSheet) {
             EqualizerSheet(viewModel = viewModel, onDismiss = { showEqSheet = false }, hazeState = hazeState)
+        }
+
+        if (showSleepTimerSheet) {
+            SleepTimerSheet(
+                remainingMs = sleepTimerRemainingMs,
+                onStart = viewModel::onStartSleepTimer,
+                onCancel = viewModel::onCancelSleepTimer,
+                onDismiss = { showSleepTimerSheet = false },
+            )
+        }
+
+        if (showLyricsSheet) {
+            LyricsSheet(
+                result = lyricsResult,
+                isLoading = isLoadingLyrics,
+                positionMs = playbackState.positionMs,
+                accentColor = accentColor,
+                onDismiss = { showLyricsSheet = false },
+            )
         }
 
         // AmbientGlow rysowany PIERWSZY (czyli niżej) — poświata pulsująca basem/głośnością,
@@ -384,7 +506,11 @@ fun NowPlayingScreen(
         }
         }
 
-        Column(modifier = Modifier.padding(top = tokens.spacing.xl)) {
+        Column(
+            modifier = Modifier
+                .padding(top = tokens.spacing.xl)
+                .alpha(nowPlayingChromeAlpha),
+        ) {
             Text(
                 text = track?.title ?: "Nic nie gra",
                 style = AuroraTextStyles.Display,
@@ -407,7 +533,11 @@ fun NowPlayingScreen(
         var dragPositionMs by remember { mutableStateOf(0f) }
         val sliderPosition = if (isDragging) dragPositionMs else playbackState.positionMs.toFloat()
 
-        Column(modifier = Modifier.padding(top = tokens.spacing.l)) {
+        Column(
+            modifier = Modifier
+                .padding(top = tokens.spacing.l)
+                .alpha(nowPlayingChromeAlpha),
+        ) {
             Slider(
                 value = sliderPosition.coerceIn(0f, durationMs.toFloat().coerceAtLeast(1f)),
                 valueRange = 0f..durationMs.toFloat().coerceAtLeast(1f),
@@ -444,7 +574,8 @@ fun NowPlayingScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = tokens.spacing.l),
+                .padding(top = tokens.spacing.l)
+                .alpha(nowPlayingChromeAlpha),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -485,6 +616,22 @@ fun NowPlayingScreen(
         }
     }
 
+        // Tryb uśpienia głównego ekranu (Etap 22) — niewidoczna nakładka na wierzchu całej reszty,
+        // żeby JEDEN tap gdziekolwiek (nie tylko na już-przygaszonych przyciskach) budził, i żeby
+        // "bez możliwości edycji" było prawdziwe: przyciski pod spodem są wizualnie przezroczyste
+        // (alpha powyżej), ale bez tej nakładki wciąż byłyby klikalne — to jedyne miejsce, które
+        // faktycznie blokuje interakcję, nie tylko ją ukrywa.
+        if (nowPlayingIdle) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                    ) { nowPlayingInteractionTick++ },
+            )
+        }
+
         // Pełnoekranowa nakładka — WŁASNA instancja silnika (nie ta sama co w ramce inline, patrz
         // komentarz przy VisualizerSurface: świadomie bez movableContentOf po testach na
         // emulatorze). Etap 16, zgłoszenie: tap na wizualizerze zmienia preset (obsłużone
@@ -496,11 +643,32 @@ fun NowPlayingScreen(
                     .fillMaxSize()
                     .background(Color.Black),
             ) {
-                VisualizerSurface(Modifier.fillMaxSize(), compactControls = false)
-                CloseVisualizerButton(
-                    modifier = Modifier.align(Alignment.TopStart).padding(tokens.spacing.m),
-                    onClick = { visualizerMode = VisualizerMode.AlbumArt },
+                VisualizerSurface(
+                    Modifier.fillMaxSize(),
+                    compactControls = false,
+                    controlsVisible = fullscreenControlsVisible,
+                    onInteraction = { fullscreenInteractionTick++ },
                 )
+                if (fullscreenControlsVisible) {
+                    CloseVisualizerButton(
+                        modifier = Modifier.align(Alignment.TopStart).padding(tokens.spacing.m),
+                        onClick = { visualizerMode = VisualizerMode.AlbumArt },
+                    )
+                } else {
+                    // Kontrolki śpią — pełnoekranowa, niewidoczna nakładka na wierzchu, żeby
+                    // JEDEN tap gdziekolwiek (nie tylko dokładnie na X/wizualizerze) budził, bez
+                    // wykonywania żadnej innej akcji przy okazji (patrz komentarz przy
+                    // `fullscreenInteractionTick` wyżej — to jedyne miejsce budzące, ProjectMSurface
+                    // samo w sobie nie cykluje presetu dopóki `controlsVisible` nie wróci do true).
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clickable(
+                                indication = null,
+                                interactionSource = remember { MutableInteractionSource() },
+                            ) { fullscreenInteractionTick++ },
+                    )
+                }
             }
         }
     }
@@ -525,8 +693,14 @@ private fun formatTime(ms: Long): String {
 private fun CloseVisualizerButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     // Box 48x48dp (minimalny touch target Material) wokół 28dp ikony — sam .size(28.dp).clickable()
     // dawał obszar dotykowy poniżej zalecanego minimum.
+    // Etap 21/22, zgłoszenie: "X nie ma wchodzić pod pasek telefonu" — w ramce inline ten przycisk
+    // siedzi już wewnątrz wcięcia rodzica (patrz Column z windowInsetsPadding wyżej), więc to tu
+    // jest no-opem (insety już skonsumowane). W nakładce pełnoekranowej (świadomie BEZ wcięcia na
+    // samym Boxie, żeby tło wizualizera mogło się wylewać pod paski) to jedyne miejsce, które
+    // faktycznie odsuwa X od paska statusu/notcha — działa wszędzie, jeden kod, zero rozgałęzień.
     Box(
         modifier = modifier
+            .windowInsetsPadding(WindowInsets.safeDrawing)
             .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,

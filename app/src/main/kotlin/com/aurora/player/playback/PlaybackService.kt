@@ -8,13 +8,18 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.aurora.player.MainActivity
-import com.aurora.player.cloud.GoogleDriveDataSourceFactory
+import com.aurora.player.cloud.AuthenticatingHttpDataSourceFactory
+import com.aurora.player.cloud.WebDavCredentialStore
+import com.aurora.player.di.ApplicationScope
+import com.aurora.player.domain.audio.AudioOutput
 import com.aurora.player.domain.repository.CloudLibraryRepository
 import com.aurora.player.domain.repository.EqRepository
 import com.aurora.player.eq.EqualizerAudioProcessor
 import com.aurora.player.eq.EqualizerRenderersFactory
 import com.aurora.player.visualizer.AudioVisualizerAnalyzer
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
@@ -38,20 +43,38 @@ class PlaybackService : MediaSessionService() {
     @Inject
     lateinit var cloudLibraryRepository: CloudLibraryRepository
 
+    @Inject
+    lateinit var audioOutput: AudioOutput
+
+    @Inject
+    @ApplicationScope
+    lateinit var applicationScope: CoroutineScope
+
     private var mediaSession: MediaSession? = null
 
     override fun onCreate() {
         super.onCreate()
 
-        val equalizerAudioProcessor = EqualizerAudioProcessor(eqRepository, visualizerAnalyzer)
-        val renderersFactory = EqualizerRenderersFactory(this, equalizerAudioProcessor)
+        applicationScope.launch { audioOutput.connect() }
 
-        // Utwory z Google Drive (https://) idą przez GoogleDriveDataSourceFactory (dokłada
-        // token OAuth); lokalne (content://) obsługuje sam DefaultDataSource.Factory — patrz
-        // DESIGN.md, sekcja "Chmura".
-        val cloudHttpDataSourceFactory = GoogleDriveDataSourceFactory {
-            cloudLibraryRepository.currentAccessTokenBlocking()
-        }
+        val equalizerAudioProcessor = EqualizerAudioProcessor(eqRepository, visualizerAnalyzer)
+        val renderersFactory = EqualizerRenderersFactory(this, listOf(equalizerAudioProcessor))
+
+        // Utwory z Google Drive i NAS/WebDAV (oba https://) idą przez jedną fabrykę, która
+        // dobiera nagłówek Authorization PER-ŻĄDANIE wg hosta (Bearer token Google vs Basic Auth
+        // WebDAV) — patrz komentarz w AuthenticatingHttpDataSourceFactory (Etap 12/22). Lokalne
+        // (content://) obsługuje sam DefaultDataSource.Factory jak dotąd.
+        val cloudHttpDataSourceFactory = AuthenticatingHttpDataSourceFactory(
+            getGoogleAccessToken = { cloudLibraryRepository.currentAccessTokenBlocking() },
+            getWebDavAuthHeader = { uri ->
+                val credentials = WebDavCredentialStore.get(this)
+                if (credentials != null && uri.host == android.net.Uri.parse(credentials.serverUrl).host) {
+                    okhttp3.Credentials.basic(credentials.username, credentials.password)
+                } else {
+                    null
+                }
+            },
+        )
         val dataSourceFactory = DefaultDataSource.Factory(this, cloudHttpDataSourceFactory)
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
 
@@ -86,6 +109,7 @@ class PlaybackService : MediaSessionService() {
             release()
             mediaSession = null
         }
+        applicationScope.launch { audioOutput.disconnect() }
         super.onDestroy()
     }
 }

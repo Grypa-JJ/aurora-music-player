@@ -8,10 +8,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.LaunchedEffect
@@ -31,15 +28,17 @@ class MainActivity : ComponentActivity() {
         setContent {
             AuroraTheme {
                 Surface(
-                    // enableEdgeToEdge() (poniżej) rysuje appkę POD paskami systemowymi celowo
-                    // (nowoczesny, immersyjny wygląd) — ale bez tego jawnego odsunięcia treści
-                    // przez WindowInsets, klikalne elementy chowają się pod paskiem statusu/
-                    // zegarem albo pod belką nawigacji telefonu (zgłoszone: przyciski w Now
-                    // Playing i mini-player pod belką Samsunga). To systemowa, jedna poprawka
-                    // dla całej appki, nie łatanie pojedynczych ikonek per ekran.
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .windowInsetsPadding(WindowInsets.safeDrawing),
+                    // Etap 17 dawał tu globalne `windowInsetsPadding(WindowInsets.safeDrawing)` —
+                    // jedna poprawka dla całej appki, ale kosztem tego, że ŻADEN ekran nie mógł
+                    // wylać tła pod paski systemowe, nawet tam gdzie to pożądane (pełnoekranowy
+                    // wizualizer, zgłoszenie: "X nie ma wchodzić pod pasek, ale wizualizer ma być
+                    // na całym ekranie"). Compose nie pozwala dziecku cofnąć wcięcia nałożonego
+                    // przez przodka (próba z ujemnym paddingiem rzuca wyjątkiem w runtime — patrz
+                    // DESIGN.md), więc jedyny poprawny sposób to nakładać wcięcie PUNKTOWO, per
+                    // ekran, tylko tam gdzie faktycznie potrzebne — patrz `LibraryScreen`,
+                    // `GeniusMixesScreen`, `OpenSourceLicensesScreen`, `NowPlayingScreen` (tam
+                    // tylko na treść ekranu, świadomie NIE na nakładkę pełnoekranową wizualizera).
+                    modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

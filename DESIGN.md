@@ -801,7 +801,9 @@ Research (raport 2) pokazuje, że nawet w najlepszym możliwym scenariuszu (Andr
 
 ### Status
 
-Ten wpis to **decyzja architektoniczna i projekt kodu, nie zaimplementowany stan** — żaden z plików wymienionych wyżej (`AudioOutput.kt`, `LocalAudioOutput.kt`, `AudioOutputModule.kt`, zmiana `EqualizerRenderersFactory`/`PlaybackService`) nie istnieje jeszcze w repo w momencie pisania tego wpisu. Do zrobienia w kolejnej rundzie: napisać te pliki, skompilować `:domain`/`:app`, i zweryfikować na żywo, że głośność nadal działa identycznie jak dziś — żeby wstawienie `LocalAudioOutput` między `AudioManager` a resztą appki nie było regresem cichej, dziś działającej funkcji.
+**Zaimplementowane w kolejnej rundzie:** `AudioOutput.kt` (`domain/.../domain/audio/`), `LocalAudioOutput.kt` (`app/.../playback/`), `AudioOutputModule.kt` (`app/.../di/`), oraz zmiana `EqualizerRenderersFactory`/`PlaybackService` dokładnie wg projektu opisanego wyżej — `PlaybackService` woła `audioOutput.connect()` w `onCreate()`/`disconnect()` w `onDestroy()` przez istniejący `@ApplicationScope` (ten sam wzorzec co `PlayerController`/`SleepTimerController`).
+
+`:domain:compileKotlin` i `:app:compileDebugKotlin` (`--rerun-tasks`, bez cache) — oba zielone. (Pierwsza próba tej samej sesji pokazała błędy w `PlaylistDetailScreen.kt`/`PlaylistsScreen.kt`/`QueueScreen.kt` — okazały się przejściowym artefaktem cache'u inkrementalnej kompilacji Kotlina po `git stash`/`stash pop` w tej samej sesji, nie realnym stanem repo; wymuszony rebuild bez cache to potwierdził.) Weryfikacja na żywo na telefonie/emulatorze (że głośność nadal działa identycznie jak dziś) wciąż czeka na kolejną rundę z dostępem do urządzenia.
 
 ## Etap 22: Podstawowe funkcje odtwarzacza zapisane w wizji, nigdy nie zbudowane — kolejka, timer snu, ulubione, playlisty
 
@@ -828,3 +830,55 @@ Kolejka i Timer snu **przed** Playlistami/Ulubionymi — nie wymagają nowego sc
 ### Świadomie NIE w planie
 
 Sync między urządzeniami, Chromecast, podcasty, publiczne udostępnianie — wymagałyby konta/backendu, którego appka celowo nie ma (ta sama zasada "100% lokalnie" co przy silniku Genius). Jeśli to się kiedyś zmieni, to osobna, świadoma decyzja produktowa usera, nie naturalne rozszerzenie tego planu.
+
+## Etap 23: Implementacja Etapu 22 (kolejka, timer snu, ulubione, playlisty) + podgląd Geniusa + ekran startowy na poziomie Spotify
+
+*Źródło: "Stwórz nam brakujące ekrany aplikacji, budowanie playlist, podgląd playlist dla Geniusa, rozbuduj apkę o to co w 22 etapie" + "ekran startowy chcemy mieć taką użyteczność bądź wyższą niż spotify" (ze zrzutem ekranu Spotify).*
+
+### Co zbudowano
+
+**Warstwa danych (Room, `aurora.db` v3→v4):** `PlaylistEntity`+`PlaylistTrackEntity` (pozycja jako `Int`, `onDelete = CASCADE`, bez duplikatów utworu w tej samej playliście) i `FavoriteTrackEntity`, każde z własnym DAO zwracającym `Flow`. `PlaylistRepositoryImpl`/`FavoritesRepositoryImpl` w nowym pakiecie `data.playlist`, `combine()`-owane do reaktywnego `StateFlow<List<Playlist>>`. `:data` nie zależy od `:app`, więc dostał WŁASNY `@ApplicationScope`/`CoroutineScope` (`data.di.CoroutineModule`) — celowa duplikacja na granicy modułów, nie przeoczenie.
+
+**Kolejka:** `PlaybackState.queue` + `PlayerRepository.addToQueue/removeFromQueue/moveQueueItem/playAt` zaimplementowane w `PlayerController` wprost na natywnych metodach Media3 `Player` (`addMediaItem`/`removeMediaItem`/`moveMediaItem`). `QueueScreen` — reorder strzałkami góra/dół (świadomie NIE drag-and-drop, żeby nie ciągnąć nowej zależności dla jednego ekranu).
+
+**Timer snu:** nowy `SleepTimerController` (singleton, osobny od `PlayerController` — inny rodzaj stanu). Jawne `PlayerRepository.pause()` (nie `togglePlayPause`), żeby odpalenie timera nigdy nie wznowiło odtwarzania. `SleepTimerSheet` z presetami 15/30/45/60 min, dostępny z Now Playing.
+
+**Ulubione i Playlisty:** `FavoritesScreen`, `PlaylistsScreen`, `PlaylistDetailScreen` (zmiana nazwy, usuwanie, dodawanie/usuwanie utworów, odtwarzanie od wybranego miejsca). Nowy reużywalny `TrackActionsSheet`/`TrackAction` w `core:designsystem` (menu "..." z Etapu 22 pkt 5) — przyjmuje surowe wartości, nie model domenowy, tak jak `TrackListItem`, żeby moduł zostawał niezależny od `:domain`. `AddToPlaylistSheet` (jeden utwór → wybór playlisty) i `AddTracksSheet` (playlista → wiele utworów z biblioteki) to lustrzane, celowo osobne komponenty, nie jeden przeciążony.
+
+**Podgląd Geniusa:** `GeniusMixPreviewScreen` — tap na karcie miksu otwiera teraz tracklistę z przyciskami "Odtwórz" i "Zapisz jako playlistę" (tworzy prawdziwą playlistę z tych samych utworów) zamiast odtwarzać od razu. `LibraryViewModel.onPlayMix` usunięty jako martwy kod po tej zmianie.
+
+**Ekran startowy (parytet ze Spotify):** dotąd Biblioteka nie miała ŻADNEGO wyszukiwania — to była największa pojedyncza luka usability, nie drobiazg. Dodano pigułkowe pole wyszukiwania (filtr lokalny po tytule/artyście/albumie, czysto w Compose state, bez zmian w VM/repozytorium) oraz poziomą, przewijalną "półkę" kart szybkiego dostępu (Ulubione/Playlisty/Genius z licznikami) zastępującą cztery ledwo klikalne ikonki w nagłówku — ten sam wzorzec co skróty na ekranie głównym Spotify, dostosowany do przewijania kciukiem zamiast siatki.
+
+### Zweryfikowane na żywo
+
+Build (`:app:compileDebugKotlin`) czysty na wszystkich modułach, `installDebug` + uruchomienie na emulatorze: wyszukiwarka, pełna "półka" trzech kart, lista utworów z ikoną "..." obok ikony Geniusa, oraz cały łańcuch "..." → "Dodaj do playlisty" → "Nowa playlista" potwierdzone zrzutami ekranu.
+
+### Świadomie NIE w tym etapie
+
+Przeglądanie wg Albumów/Wykonawców (osobny, większy koszt — grupowanie + nowe ekrany + nawigacja) i drag-and-drop reorder kolejki/playlisty — oba to naturalne następne kroki, nie przeoczenia.
+
+## Etap 24: Tekst utworu (zsynchronizowane napisy) — LRCLIB, offline-first
+
+*Źródło: "zajmij się pobieraniem napisów, nazw utworów i metadanych do utworów w bibliotece" — sprecyzowane przez usera: zsynchronizowane napisy (przewijają się z utworem), źródło LRCLIB, z lokalnym cache żeby działało offline po pierwszym pobraniu. Naprawa błędnych/brakujących tytułów i wykonawców (MusicBrainz) też potwierdzona jako "tak" — patrz "Świadomie NIE w tym etapie" niżej, to osobna runda.*
+
+### Diagnoza
+
+Appka dziś czyta WYŁĄCZNIE to, co da `MediaStore` (`MediaStoreScanner.kt`) — zero kodu do tekstu utworu, zero wbudowanego czytania tagów ID3 `USLT`/Vorbis `LYRICS`. Uwaga na nazewnictwo: `GeniusRepository`/"Genius Mixes" w tym projekcie to WŁASNY, w pełni lokalny silnik rekomendacji (podobne utwory z historii odsłuchań) — nie ma nic wspólnego z genius.com, więc ta funkcja świadomie nazywa się "Lyrics"/"tekst utworu", nie "Genius", żeby nie kolidować.
+
+### Projekt
+
+**Źródło danych — LRCLIB (`lrclib.net/api/get`), bez klucza API, bez Retrofit/Moshi.** Jedno proste GET (`track_name`/`artist_name`/`album_name`/`duration`), sparsowane wbudowanym `org.json` — ten sam minimalistyczny wzorzec co `WebDavLibraryRepository` (OkHttp bezpośrednio, żadna nowa zależność sieciowa/JSON).
+
+**Offline-first cache (decyzja usera: "pobierać za 1 razem... zapisywać i używać offline") — nowa tabela Room `lyrics_cache` (`aurora.db` v4→v5, `LyricsCacheEntity`/`LyricsCacheDao`):** `LyricsRepositoryImpl.getLyrics()` czyta cache PRZED siecią; jeśli wpisu nie ma, pyta LRCLIB raz i zapisuje wynik — **także brak wyniku** (`syncedLrc`/`plainText` oba `null`), żeby appka nigdy nie odpytywała ponownie tego samego utworu bez tekstu. Dokładnie ta sama zasada "zapisz też negatyw" co `favorite_tracks`/inne tabele tego projektu, tu zastosowana do wyniku sieciowego zamiast lokalnej akcji użytkownika.
+
+**Warstwy:** `LyricsResult` (sealed: `Synced(lines)`/`Plain(text)`/`NotFound`) + `LyricsLine`+`LrcParser` (parser formatu `.lrc`, pure Kotlin) w `domain`; `LyricsCacheEntity`/`LyricsCacheDao` w `data` (Room); `LrcLibClient`+`LyricsRepositoryImpl`+`LyricsModule` w `app` (potrzebują OkHttp — ten sam podział co `CloudLibraryRepository`/`GoogleDriveLibraryRepository`: interfejs w `domain`, implementacja tam gdzie jest sieć).
+
+**UI — `LyricsSheet` (Now Playing, nowa ikona obok Equalizera/Timera snu):** `LyricsResult.Synced` renderuje się jako `LazyColumn` z auto-scrollem (`animateScrollToItem` na linię, której `timestampMs <= positionMs`) i podświetleniem bieżącej linii kolorem akcentu okładki — ten sam `accentColor` co reszta ekranu. `Plain` (LRCLIB nie zawsze ma zsynchronizowaną wersję) to statyczny blok tekstu bez podświetlania. `LibraryViewModel` dociąga tekst tym samym wzorcem co paleta koloru okładki — `distinctUntilChanged` po ID bieżącego utworu, nie po każdej emisji `playbackState` (ta zmienia się co ~300ms przy odtwarzaniu).
+
+### Zweryfikowane
+
+`:domain:compileKotlin`, `:data:compileDebugKotlin`, `:app:compileDebugKotlin` (`--rerun-tasks`, bez cache) — wszystkie zielone. Weryfikacja na żywo (realny utwór z LRCLIB, offline po drugim odtworzeniu) czeka na dostęp do telefonu/emulatora, tak jak reszta zaległej weryfikacji z Etapu 21.
+
+### Świadomie NIE w tym etapie
+
+**Naprawa błędnych/brakujących tytułów i wykonawców przez MusicBrainz** — user potwierdził "tak", ale to osobny, samodzielny kawałek pracy: wymaga (1) heurystyki "ten tag wygląda źle" (pusty/placeholder typu "Track 01"/nazwa pliku), (2) zapytania do MusicBrainz (inny kontrakt API niż LRCLIB, wymaga nagłówka `User-Agent` z kontaktem wg ich zasad + limitu ~1 zapytanie/sekundę), (3) nowej tabeli nadpisań (`track_metadata_override` czy podobnej — MediaStore nie jest bezpiecznie zapisywalny ze scoped storage) i scalenia jej w `TrackRepositoryImpl` przy odczycie. Nie zrobione teraz, żeby nie mieszać dwóch różnych kontraktów sieciowych i dwóch różnych modeli cache'u w jednej rundzie — naturalny następny krok, nie przeoczenie.

@@ -3,7 +3,10 @@ package com.aurora.player.data.di
 import android.content.Context
 import androidx.room.Room
 import com.aurora.player.data.database.AuroraDatabase
+import com.aurora.player.data.database.dao.FavoriteTrackDao
+import com.aurora.player.data.database.dao.LyricsCacheDao
 import com.aurora.player.data.database.dao.PlayEventDao
+import com.aurora.player.data.database.dao.PlaylistDao
 import com.aurora.player.data.database.dao.SkipEventDao
 import com.aurora.player.data.database.dao.TrackAffinityDao
 import com.aurora.player.data.database.dao.TrackCooccurrenceDao
@@ -39,4 +42,13 @@ object DatabaseModule {
 
     @Provides
     fun provideTrackCooccurrenceDao(database: AuroraDatabase): TrackCooccurrenceDao = database.trackCooccurrenceDao()
+
+    @Provides
+    fun providePlaylistDao(database: AuroraDatabase): PlaylistDao = database.playlistDao()
+
+    @Provides
+    fun provideFavoriteTrackDao(database: AuroraDatabase): FavoriteTrackDao = database.favoriteTrackDao()
+
+    @Provides
+    fun provideLyricsCacheDao(database: AuroraDatabase): LyricsCacheDao = database.lyricsCacheDao()
 }

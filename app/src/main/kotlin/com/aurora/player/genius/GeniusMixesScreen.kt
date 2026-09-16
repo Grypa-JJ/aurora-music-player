@@ -7,10 +7,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
@@ -44,6 +47,7 @@ import com.aurora.player.library.LibraryViewModel
 @Composable
 fun GeniusMixesScreen(
     viewModel: LibraryViewModel,
+    onOpenMixPreview: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val mixes by viewModel.geniusMixes.collectAsState()
@@ -52,7 +56,7 @@ fun GeniusMixesScreen(
 
     LaunchedEffect(Unit) { viewModel.loadGeniusMixes() }
 
-    Column(modifier = modifier.fillMaxSize()) {
+    Column(modifier = modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
         Text(
             text = "Genius",
             style = AuroraTextStyles.Headline,
@@ -94,9 +98,12 @@ fun GeniusMixesScreen(
                     // nazw u źródła, klucz LazyColumn nie powinien nigdy zależeć od pola, którego
                     // unikalności nie gwarantuje typ (GeniusMix.name to zwykły String).
                     itemsIndexed(mixes) { index, mix ->
+                        // Etap 22, user: "brak podglądu playlist" — tap otwiera teraz podgląd
+                        // tracklisty (GeniusMixPreviewScreen) zamiast odtwarzać od razu; "Odtwórz"
+                        // jest tam jednym tapnięciem dalej, więc nic nie zostało utracone.
                         GeniusMixCard(
                             mix = mix,
-                            onClick = { viewModel.onPlayMix(mix) },
+                            onClick = { onOpenMixPreview(index) },
                             modifier = Modifier.padding(bottom = tokens.spacing.m),
                         )
                     }

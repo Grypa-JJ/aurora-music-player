@@ -83,6 +83,11 @@ dependencies {
     implementation(libs.androidx.palette.ktx)
     implementation("androidx.compose.animation:animation")
 
+    // Drag-and-drop reorder kolejki/playlist (Etap 23) — brak oficjalnego API w Compose
+    // Foundation dla LazyColumn, hand-rolling drag physics byłoby wyższym ryzykiem (jank, złe
+    // progi zamiany) niż ta jedna mała, aktywnie utrzymywana biblioteka.
+    implementation(libs.reorderable)
+
     implementation(libs.coil.compose)
     implementation(libs.haze)
     implementation(libs.haze.materials)
@@ -98,6 +103,11 @@ dependencies {
     implementation(libs.google.api.services.drive) {
         exclude(group = "org.apache.httpcomponents")
     }
+
+    // NAS/WebDAV (Etap 12/22) — protokół prosty (PROPFIND po HTTP, Basic Auth), bez OAuth/SDK
+    // dostawcy. OkHttp już jest transitywną zależnością przez coil-network-okhttp — deklarujemy
+    // ją tu jawnie, bo używamy jej API bezpośrednio (nie tylko przez Coil).
+    implementation(libs.okhttp)
 
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
