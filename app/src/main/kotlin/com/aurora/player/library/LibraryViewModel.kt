@@ -499,4 +499,18 @@ class LibraryViewModel @Inject constructor(
             _isSearchingPodcasts.value = false
         }
     }
+
+    /**
+     * Top podcasty danego kraju — DESIGN.md Etap 33, żeby "Dodaj podcast" miało od razu czym się
+     * wypełnić (user: "chciałbym różne dla regionu, podobnie jak stacje dla radia"). Ta sama lista
+     * co [searchPodcasts] ([podcastSearchResults]) — z punktu widzenia UI to po prostu inny sposób
+     * jej wypełnienia, nie osobny stan.
+     */
+    fun loadTopPodcasts(countryCode: String) {
+        viewModelScope.launch {
+            _isSearchingPodcasts.value = true
+            _podcastSearchResults.value = podcastCatalogRepository.topPodcastsByCountry(countryCode)
+            _isSearchingPodcasts.value = false
+        }
+    }
 }

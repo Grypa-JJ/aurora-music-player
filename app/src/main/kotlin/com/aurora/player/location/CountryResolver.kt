@@ -1,4 +1,4 @@
-package com.aurora.player.radio
+package com.aurora.player.location
 
 import android.content.Context
 import android.location.Geocoder
@@ -9,10 +9,12 @@ import kotlinx.coroutines.withContext
 import java.util.Locale
 
 /**
- * Najlepsza-próba: ostatnia znana lokalizacja + [Geocoder] → kod kraju ISO — DESIGN.md Etap 31.
- * Zwraca `null` nie tylko przy odmowie zgody, ale też przy braku ostatniej lokalizacji lub braku
- * działającego Geocodera (częste na emulatorach/niektórych ROM-ach bez usług Google) — wołający
- * ma ZAWSZE pokazać ręczny wybór kraju jako fallback, nie tylko po odmowie permission.
+ * Najlepsza-próba: ostatnia znana lokalizacja + [Geocoder] → kod kraju ISO — DESIGN.md Etap 31/33
+ * (współdzielone między Radiem i regionalnymi sugestiami Podcastów, stąd osobny, neutralny
+ * pakiet zamiast trzymania tego w `radio`). Zwraca `null` nie tylko przy odmowie zgody, ale też
+ * przy braku ostatniej lokalizacji lub braku działającego Geocodera (częste na
+ * emulatorach/niektórych ROM-ach bez usług Google) — wołający ma ZAWSZE pokazać ręczny wybór
+ * kraju jako fallback, nie tylko po odmowie permission.
  */
 suspend fun resolveCountryCodeFromLastKnownLocation(context: Context): String? =
     withContext(Dispatchers.IO) {

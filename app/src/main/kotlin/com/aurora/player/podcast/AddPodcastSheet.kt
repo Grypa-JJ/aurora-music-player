@@ -1,5 +1,9 @@
 package com.aurora.player.podcast
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +22,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
@@ -30,27 +35,38 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import coil3.compose.AsyncImage
 import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
 import com.aurora.player.domain.model.PodcastSearchResult
 import com.aurora.player.domain.model.PodcastSearchSource
 import com.aurora.player.library.LibraryViewModel
+import com.aurora.player.location.CountryPickerSheet
+import com.aurora.player.location.resolveCountryCodeFromLastKnownLocation
+import kotlinx.coroutines.launch
 
 /**
- * Dodawanie podcastu — DESIGN.md Etap 32. Dwie równoległe ścieżki: wklejony adres RSS (działa
- * zawsze, zero API) i wyszukiwanie w katalogu (iTunes zawsze + Podcast Index gdy skonfigurowany).
+ * Dodawanie podcastu — DESIGN.md Etap 32/33. Trzy równoległe ścieżki: wklejony adres RSS (działa
+ * zawsze, zero API), wyszukiwanie w katalogu (iTunes zawsze + Podcast Index gdy skonfigurowany) i
+ * domyślnie wypełniona lista top podcastów kraju usera — ten sam wzorzec geolokalizacji/fallbacku
+ * co `RadioScreen` (DESIGN.md Etap 31), świadomie reużyty wprost zamiast duplikowany
+ * ([resolveCountryCodeFromLastKnownLocation]/[CountryPickerSheet] to ogólne, bezstanowe narzędzia
+ * bez niczego specyficznego dla radia).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -59,6 +75,8 @@ fun AddPodcastSheet(
     onSubscribed: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val tokens = LocalAuroraTokens.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val searchResults by viewModel.podcastSearchResults.collectAsState()
@@ -68,6 +86,42 @@ fun AddPodcastSheet(
     var feedUrl by remember { mutableStateOf("") }
     var searchQuery by remember { mutableStateOf("") }
     var showPodcastIndexDialog by remember { mutableStateOf(false) }
+    var showCountryPicker by remember { mutableStateOf(false) }
+    var selectedCountryCode by remember { mutableStateOf<String?>(null) }
+    var hasResolvedInitialCountry by remember { mutableStateOf(false) }
+
+    fun onCountryResolved(code: String) {
+        selectedCountryCode = code
+        viewModel.loadTopPodcasts(code)
+    }
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            scope.launch {
+                val code = resolveCountryCodeFromLastKnownLocation(context)
+                if (code != null) onCountryResolved(code) else showCountryPicker = true
+            }
+        } else {
+            showCountryPicker = true
+        }
+    }
+
+    // Ten sam wzorzec "user zawsze kończy z jakąś listą, nigdy z pustym ekranem" co RadioScreen —
+    // odpalone RAZ przy otwarciu arkusza (nie przy każdej rekompozycji).
+    LaunchedEffect(Unit) {
+        if (hasResolvedInitialCountry) return@LaunchedEffect
+        hasResolvedInitialCountry = true
+        val alreadyGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+        if (alreadyGranted) {
+            val code = resolveCountryCodeFromLastKnownLocation(context)
+            if (code != null) onCountryResolved(code) else showCountryPicker = true
+        } else {
+            locationPermissionLauncher.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -108,10 +162,19 @@ fun AddPodcastSheet(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "lub przeszukaj katalog",
+                    text = "lub przeszukaj katalog / top w Twoim kraju",
                     style = AuroraTextStyles.Label,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    imageVector = Icons.Filled.Public,
+                    contentDescription = "Zmień kraj",
+                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    modifier = Modifier
+                        .padding(end = tokens.spacing.s)
+                        .size(20.dp)
+                        .clickable { showCountryPicker = true },
                 )
                 Icon(
                     imageVector = Icons.Filled.Settings,
@@ -132,7 +195,15 @@ fun AddPodcastSheet(
                 placeholder = { Text("Szukaj podcastu") },
                 leadingIcon = { Icon(imageVector = Icons.Filled.Search, contentDescription = null) },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { if (searchQuery.isNotBlank()) viewModel.searchPodcasts(searchQuery) }),
+                keyboardActions = KeyboardActions(
+                    onSearch = {
+                        if (searchQuery.isBlank()) {
+                            selectedCountryCode?.let { viewModel.loadTopPodcasts(it) }
+                        } else {
+                            viewModel.searchPodcasts(searchQuery)
+                        }
+                    },
+                ),
                 modifier = Modifier.fillMaxWidth().padding(top = tokens.spacing.s, bottom = tokens.spacing.s),
             )
         }
@@ -163,6 +234,16 @@ fun AddPodcastSheet(
                 androidx.compose.foundation.layout.Spacer(modifier = Modifier.height(tokens.spacing.l))
             }
         }
+    }
+
+    if (showCountryPicker) {
+        CountryPickerSheet(
+            onSelect = { code ->
+                showCountryPicker = false
+                onCountryResolved(code)
+            },
+            onDismiss = { showCountryPicker = false },
+        )
     }
 
     if (showPodcastIndexDialog) {

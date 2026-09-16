@@ -115,6 +115,47 @@ class PodcastCatalogRepositoryImpl @Inject constructor(
         }
     }
 
+    override suspend fun topPodcastsByCountry(countryCode: String, limit: Int): List<PodcastSearchResult> =
+        withContext(Dispatchers.IO) {
+            // Apple "Top Charts" (rss.applemarketingtools.com) — darmowe, bez klucza, ale daje
+            // tylko numeryczne ID kolekcji w kolejności rankingu, NIE realny `feedUrl`. Trzeba
+            // dociągnąć iTunes Lookup (ten sam endpoint co searchITunes) jednym zapytaniem
+            // wsadowym po przecinku, więc to nadal dwa zapytania sieciowe na jedno odświeżenie.
+            val chartJson = get("https://rss.applemarketingtools.com/api/v2/${countryCode.lowercase()}/podcasts/top/$limit/podcasts.json")
+                ?: return@withContext emptyList()
+            val rankedIds = try {
+                val results = org.json.JSONObject(chartJson).optJSONObject("feed")?.optJSONArray("results") ?: JSONArray()
+                (0 until results.length()).map { i -> results.getJSONObject(i).optString("id") }.filter { it.isNotBlank() }
+            } catch (e: Exception) {
+                Log.e(TAG, "topPodcastsByCountry(): parsowanie listy top nieudane", e)
+                return@withContext emptyList()
+            }
+            if (rankedIds.isEmpty()) return@withContext emptyList()
+
+            val lookupJson = get("https://itunes.apple.com/lookup?id=${rankedIds.joinToString(",")}&entity=podcast")
+                ?: return@withContext emptyList()
+            val resultById = try {
+                val results = org.json.JSONObject(lookupJson).optJSONArray("results") ?: JSONArray()
+                (0 until results.length()).mapNotNull { i ->
+                    val obj = results.getJSONObject(i)
+                    val feedUrl = obj.optString("feedUrl").ifBlank { return@mapNotNull null }
+                    val id = obj.optString("collectionId")
+                    id to PodcastSearchResult(
+                        feedUrl = feedUrl,
+                        title = obj.optString("collectionName").ifBlank { "Bez tytułu" },
+                        author = obj.optString("artistName"),
+                        artworkUrl = obj.optString("artworkUrl600").ifBlank { obj.optString("artworkUrl100") }.takeIf { it.isNotBlank() },
+                        source = PodcastSearchSource.ITUNES,
+                    )
+                }.toMap()
+            } catch (e: Exception) {
+                Log.e(TAG, "topPodcastsByCountry(): parsowanie lookup nieudane", e)
+                return@withContext emptyList()
+            }
+            // Zachowaj kolejność rankingu z listy TOP — odpowiedź Lookup NIE gwarantuje kolejności.
+            rankedIds.mapNotNull { resultById[it] }
+        }
+
     private fun get(url: String): String? = try {
         val request = Request.Builder().url(url).header("User-Agent", "AuroraMusicPlayer/1.0").build()
         httpClient.newCall(request).execute().use { response ->

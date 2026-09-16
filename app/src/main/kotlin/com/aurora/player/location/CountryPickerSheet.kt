@@ -1,4 +1,4 @@
-package com.aurora.player.radio
+package com.aurora.player.location
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -26,8 +26,9 @@ import com.aurora.player.designsystem.theme.LocalAuroraTokens
 import java.util.Locale
 
 /**
- * Ręczny wybór kraju dla Radia — fallback gdy user odmówi geolokalizacji ALBO gdy się ona nie
- * powiedzie (Geocoder bez wyniku, częste na emulatorach) — DESIGN.md Etap 31.
+ * Ręczny wybór kraju — fallback gdy user odmówi geolokalizacji ALBO gdy się ona nie powiedzie
+ * (Geocoder bez wyniku, częste na emulatorach) — DESIGN.md Etap 31/33. Współdzielony między
+ * Radiem (stacje z kraju) i Podcastami (regionalne sugestie), stąd neutralny pakiet `location`.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

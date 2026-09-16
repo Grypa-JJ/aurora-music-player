@@ -82,7 +82,10 @@ import com.aurora.player.designsystem.theme.LocalAuroraTokens
 import com.aurora.player.domain.model.Track
 import com.aurora.player.domain.model.TrackSource
 import com.aurora.player.playlist.AddToPlaylistSheet
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeEffect
 import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.materials.HazeMaterials
 import dev.chrisbanes.haze.rememberHazeState
 import java.util.concurrent.TimeUnit
 
@@ -484,6 +487,7 @@ fun LibraryScreen(
             cloudAccountEmail = cloudAccountEmail,
             isWebDavConnected = isWebDavConnected,
             webDavServerLabel = webDavServerLabel,
+            hazeState = hazeState,
             onCloudClick = {
                 if (isCloudSignedIn) {
                     viewModel.onCloudSignOut()
@@ -594,6 +598,14 @@ private fun QuickAccessCard(
  * Kolejne źródła (OneDrive/Dropbox — Etap 12, wymagają rejestracji aplikacji deweloperskiej u
  * dostawcy) dokładają się jako kolejny wiersz tutaj, nie kolejna ikona w LibraryScreen.
  */
+/**
+ * Etap 33, zgłoszenie ze zrzutem ekranu: sheet nie miał jawnego `shape`, więc dziedziczył
+ * `MaterialTheme.shapes.extraLarge` (999dp, myślany do pigułek — patrz Shape.kt) i renderował
+ * się jako kopuła nachodząca na listę pod spodem, zamiast zwykłych zaokrąglonych rogów — ten sam
+ * bug i ta sama poprawka co przy EqualizerSheet (Etap 19/20). Rzędy źródeł dostały też styl karty
+ * (zaokrąglone tło, odstępy) zamiast płaskiej listy, żeby wyglądać spójnie z resztą appki
+ * (PlaylistCard/PodcastRow) zamiast "średnio".
+ */
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 private fun MusicSourcesSheet(
@@ -601,18 +613,35 @@ private fun MusicSourcesSheet(
     cloudAccountEmail: String?,
     isWebDavConnected: Boolean,
     webDavServerLabel: String?,
+    hazeState: HazeState? = null,
     onCloudClick: () -> Unit,
     onWebDavClick: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val tokens = LocalAuroraTokens.current
-    androidx.compose.material3.ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(modifier = Modifier.padding(bottom = tokens.spacing.l)) {
+    val surfaceColor = MaterialTheme.colorScheme.surface
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        containerColor = if (hazeState != null) surfaceColor.copy(alpha = 0.94f) else surfaceColor,
+        scrimColor = Color.Black.copy(alpha = 0.75f),
+        modifier = if (hazeState != null) {
+            Modifier.hazeEffect(state = hazeState, style = HazeMaterials.regular(surfaceColor))
+        } else {
+            Modifier
+        },
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = tokens.spacing.m)
+                .padding(bottom = tokens.spacing.l),
+        ) {
             Text(
                 text = "Źródła muzyki",
                 style = AuroraTextStyles.Title,
                 color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s),
+                modifier = Modifier.padding(vertical = tokens.spacing.s),
             )
             MusicSourceRow(
                 icon = if (isCloudSignedIn) Icons.Filled.Cloud else Icons.Filled.CloudOff,
@@ -620,6 +649,7 @@ private fun MusicSourcesSheet(
                 subtitle = cloudAccountEmail ?: "Nie połączono",
                 isConnected = isCloudSignedIn,
                 onClick = onCloudClick,
+                modifier = Modifier.padding(bottom = tokens.spacing.s),
             )
             MusicSourceRow(
                 icon = Icons.Filled.Storage,
@@ -627,6 +657,7 @@ private fun MusicSourcesSheet(
                 subtitle = webDavServerLabel ?: "Nie połączono",
                 isConnected = isWebDavConnected,
                 onClick = onWebDavClick,
+                modifier = Modifier.padding(bottom = tokens.spacing.s),
             )
             // OneDrive/Dropbox (DESIGN.md Etap 12) — wymagają rejestracji aplikacji deweloperskiej
             // u dostawcy, więc na razie wyszarzone "wkrótce" zamiast udawania że działają.
@@ -637,6 +668,7 @@ private fun MusicSourcesSheet(
                 isConnected = false,
                 enabled = false,
                 onClick = {},
+                modifier = Modifier.padding(bottom = tokens.spacing.s),
             )
             MusicSourceRow(
                 icon = Icons.Filled.CloudOff,
@@ -664,6 +696,8 @@ private fun MusicSourceRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.background)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s + 4.dp),
         verticalAlignment = Alignment.CenterVertically,
