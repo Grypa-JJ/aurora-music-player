@@ -7,6 +7,7 @@ import com.aurora.player.cloud.GoogleDriveLibraryRepository
 import com.aurora.player.cloud.WebDavLibraryRepository
 import com.aurora.player.color.AlbumArtColorExtractor
 import com.aurora.player.color.AlbumArtPalette
+import com.aurora.player.domain.repository.AudioMetadataRepository
 import com.aurora.player.domain.model.EqState
 import com.aurora.player.domain.model.GeniusMix
 import com.aurora.player.domain.model.LyricsResult
@@ -17,16 +18,28 @@ import com.aurora.player.domain.repository.EqRepository
 import com.aurora.player.domain.repository.FavoritesRepository
 import com.aurora.player.domain.repository.GeniusRepository
 import com.aurora.player.domain.repository.LyricsRepository
+import com.aurora.player.domain.repository.MetadataEnrichmentRepository
+import com.aurora.player.domain.model.Podcast
+import com.aurora.player.domain.model.PodcastEpisode
+import com.aurora.player.domain.model.PodcastSearchResult
+import com.aurora.player.domain.model.RadioStation
+import com.aurora.player.domain.model.TrackSource
 import com.aurora.player.domain.repository.PlayerRepository
 import com.aurora.player.domain.repository.PlaylistRepository
+import com.aurora.player.domain.repository.PodcastCatalogRepository
+import com.aurora.player.domain.repository.PodcastRepository
+import com.aurora.player.domain.repository.RadioRepository
 import com.aurora.player.domain.usecase.GetTracksUseCase
 import com.aurora.player.playback.SleepTimerController
+import com.aurora.player.podcast.toTrack
+import com.aurora.player.radio.toTrack
 import com.aurora.player.visualizer.AudioVisualizerAnalyzer
 import com.aurora.player.visualizer.VisualizerFrame
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
@@ -60,6 +73,11 @@ class LibraryViewModel @Inject constructor(
     private val favoritesRepository: FavoritesRepository,
     private val sleepTimerController: SleepTimerController,
     private val lyricsRepository: LyricsRepository,
+    private val metadataEnrichmentRepository: MetadataEnrichmentRepository,
+    private val audioMetadataRepository: AudioMetadataRepository,
+    private val radioRepository: RadioRepository,
+    private val podcastRepository: PodcastRepository,
+    private val podcastCatalogRepository: PodcastCatalogRepository,
 ) : ViewModel() {
 
     val isCloudSignedIn: StateFlow<Boolean> = googleDriveLibraryRepository.isSignedIn
@@ -127,6 +145,19 @@ class LibraryViewModel @Inject constructor(
                     }
                 }
         }
+        // Auto-zapis pozycji odcinka podkastu co ~5s odtwarzania — DESIGN.md Etap 25 ("gdzie
+        // skończyłem"). Bucket po 5s (nie każdy tick 300ms z PlayerController), żeby nie walić w
+        // Room przy każdej klatce pozycji.
+        viewModelScope.launch {
+            playbackState
+                .distinctUntilChanged { old, new -> old.positionMs / 5000 == new.positionMs / 5000 }
+                .collect { state ->
+                    val track = state.currentTrack
+                    if (track != null && track.source == TrackSource.PODCAST && state.positionMs > 0) {
+                        podcastRepository.savePlaybackPosition(track.id, state.positionMs)
+                    }
+                }
+        }
         // Sesja Google potrafi przetrwać restart appki (GoogleSignIn.getLastSignedInAccount) —
         // jeśli tak, dociągnij bibliotekę z chmury bez czekania na akcję użytkownika.
         if (isCloudSignedIn.value) refreshCloud()
@@ -145,6 +176,38 @@ class LibraryViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true) }
             val tracks = getTracksUseCase()
             _uiState.update { it.copy(tracks = tracks, isLoading = false) }
+            enrichMetadata(tracks)
+            extractAudioMetadata(tracks)
+        }
+    }
+
+    /**
+     * Naprawia błędne/brakujące tytuły, wykonawców i okładki w tle (MusicBrainz/Cover Art
+     * Archive, rate-limited ~1/s) — DESIGN.md Etap 25/27. Osobna korutyna: NIE opóźnia pierwszego
+     * wyświetlenia biblioteki powyżej, poszczególne utwory podmieniają się na liście w miarę jak
+     * dopasowania wracają.
+     */
+    private fun enrichMetadata(tracks: List<Track>) {
+        viewModelScope.launch {
+            metadataEnrichmentRepository.enrichLibrary(tracks).collect { enrichedTrack ->
+                _uiState.update { state ->
+                    state.copy(tracks = state.tracks.map { if (it.id == enrichedTrack.id) enrichedTrack else it })
+                }
+            }
+        }
+    }
+
+    /**
+     * Dociąga codec/bitrate/sample rate/bit depth w tle (lokalny odczyt pliku, prerekwizyt pod
+     * przyszły Audio Lab) — DESIGN.md Etap 29. Ten sam wzorzec co [enrichMetadata] wyżej.
+     */
+    private fun extractAudioMetadata(tracks: List<Track>) {
+        viewModelScope.launch {
+            audioMetadataRepository.extractMissing(tracks).collect { updatedTrack ->
+                _uiState.update { state ->
+                    state.copy(tracks = state.tracks.map { if (it.id == updatedTrack.id) updatedTrack else it })
+                }
+            }
         }
     }
 
@@ -171,6 +234,11 @@ class LibraryViewModel @Inject constructor(
     fun onSkipPrevious() {
         playerRepository.skipToPrevious()
     }
+
+    // --- Powtarzanie/losowa kolejność — DESIGN.md Etap 26 ---
+
+    fun onCycleRepeatMode() = playerRepository.cycleRepeatMode()
+    fun onToggleShuffle() = playerRepository.toggleShuffle()
 
     /** Odtwarza dowolną listę utworów od [startIndex] — playlisty, ulubione, podgląd Geniusa. */
     fun onPlayTracks(tracks: List<Track>, startIndex: Int = 0) {
@@ -338,4 +406,97 @@ class LibraryViewModel @Inject constructor(
     val sleepTimerRemainingMs: StateFlow<Long?> = sleepTimerController.remainingMs
     fun onStartSleepTimer(durationMs: Long) = sleepTimerController.start(durationMs)
     fun onCancelSleepTimer() = sleepTimerController.cancel()
+
+    // --- Radio — DESIGN.md Etap 24 ---
+
+    private val _radioStations = MutableStateFlow<List<RadioStation>>(emptyList())
+    val radioStations: StateFlow<List<RadioStation>> = _radioStations.asStateFlow()
+
+    private val _isLoadingRadio = MutableStateFlow(false)
+    val isLoadingRadio: StateFlow<Boolean> = _isLoadingRadio.asStateFlow()
+
+    fun loadTopRadioStations(countryCode: String) {
+        viewModelScope.launch {
+            _isLoadingRadio.value = true
+            _radioStations.value = radioRepository.topStationsByCountry(countryCode)
+            _isLoadingRadio.value = false
+        }
+    }
+
+    fun searchRadioStations(query: String) {
+        viewModelScope.launch {
+            _isLoadingRadio.value = true
+            _radioStations.value = radioRepository.search(query)
+            _isLoadingRadio.value = false
+        }
+    }
+
+    fun onPlayRadioStation(station: RadioStation) {
+        playerRepository.playQueue(listOf(station.toTrack()))
+    }
+
+    // --- Podcasty — DESIGN.md Etap 25 ---
+
+    val podcastSubscriptions: StateFlow<List<Podcast>> = podcastRepository.subscriptions
+
+    fun subscribeToPodcast(feedUrl: String, onResult: (Podcast?) -> Unit = {}) {
+        viewModelScope.launch { onResult(podcastRepository.subscribeByFeedUrl(feedUrl)) }
+    }
+
+    fun unsubscribeFromPodcast(feedUrl: String) {
+        viewModelScope.launch { podcastRepository.unsubscribe(feedUrl) }
+    }
+
+    private val _podcastEpisodes = MutableStateFlow<List<PodcastEpisode>>(emptyList())
+    val podcastEpisodes: StateFlow<List<PodcastEpisode>> = _podcastEpisodes.asStateFlow()
+
+    private val _isLoadingPodcastEpisodes = MutableStateFlow(false)
+    val isLoadingPodcastEpisodes: StateFlow<Boolean> = _isLoadingPodcastEpisodes.asStateFlow()
+
+    fun loadPodcastEpisodes(feedUrl: String) {
+        viewModelScope.launch {
+            _isLoadingPodcastEpisodes.value = true
+            _podcastEpisodes.value = podcastRepository.fetchEpisodes(feedUrl)
+            _isLoadingPodcastEpisodes.value = false
+        }
+    }
+
+    /** Odtwarza odcinek i od razu przeskakuje do zapisanej pozycji ("gdzie skończyłem"). */
+    fun onPlayPodcastEpisode(episode: PodcastEpisode, podcast: Podcast) {
+        viewModelScope.launch {
+            val track = episode.toTrack(podcast)
+            val savedPosition = podcastRepository.getPlaybackPosition(track.id)
+            playerRepository.playQueue(listOf(track))
+            if (savedPosition > 0L) playerRepository.seekTo(savedPosition)
+        }
+    }
+
+    fun onSetPlaybackSpeed(speed: Float) = playerRepository.setPlaybackSpeed(speed)
+
+    // --- Katalogi podkastów: iTunes (zawsze) + Podcast Index (opcjonalnie, własny klucz usera) ---
+
+    private val _podcastSearchResults = MutableStateFlow<List<PodcastSearchResult>>(emptyList())
+    val podcastSearchResults: StateFlow<List<PodcastSearchResult>> = _podcastSearchResults.asStateFlow()
+
+    private val _isSearchingPodcasts = MutableStateFlow(false)
+    val isSearchingPodcasts: StateFlow<Boolean> = _isSearchingPodcasts.asStateFlow()
+
+    val isPodcastIndexConfigured: StateFlow<Boolean> = podcastCatalogRepository.isPodcastIndexConfigured
+
+    fun setPodcastIndexCredentials(apiKey: String, apiSecret: String) =
+        podcastCatalogRepository.setPodcastIndexCredentials(apiKey, apiSecret)
+
+    fun clearPodcastIndexCredentials() = podcastCatalogRepository.clearPodcastIndexCredentials()
+
+    fun searchPodcasts(query: String) {
+        viewModelScope.launch {
+            _isSearchingPodcasts.value = true
+            val iTunesResults = podcastCatalogRepository.searchITunes(query)
+            val podcastIndexResults = podcastCatalogRepository.searchPodcastIndex(query)
+            // Ten sam podcast może wypaść z obu katalogów naraz — dedup po feedUrl, iTunes pierwsze.
+            val seenFeedUrls = mutableSetOf<String>()
+            _podcastSearchResults.value = (iTunesResults + podcastIndexResults).filter { seenFeedUrls.add(it.feedUrl) }
+            _isSearchingPodcasts.value = false
+        }
+    }
 }

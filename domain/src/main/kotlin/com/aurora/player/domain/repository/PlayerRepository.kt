@@ -26,4 +26,13 @@ interface PlayerRepository {
 
     /** Przeskakuje do utworu na danym indeksie w bieżącej kolejce, bez jej zmiany. */
     fun playAt(index: Int)
+
+    // --- Powtarzanie/losowa kolejność — DESIGN.md Etap 26 ---
+
+    /** OFF → ALL → ONE → OFF. */
+    fun cycleRepeatMode()
+    fun toggleShuffle()
+
+    /** Prędkość odtwarzania (1.0 = normalna) — DESIGN.md Etap 25, głównie dla podcastów. */
+    fun setPlaybackSpeed(speed: Float)
 }

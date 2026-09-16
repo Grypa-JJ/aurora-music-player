@@ -3,6 +3,7 @@ package com.aurora.player.data.genius
 import com.aurora.player.data.database.dao.TrackAffinityDao
 import com.aurora.player.data.database.dao.TrackCooccurrenceDao
 import com.aurora.player.data.database.dao.PlayEventDao
+import com.aurora.player.data.database.dao.SkipEventDao
 import com.aurora.player.data.database.entity.TrackCooccurrenceEntity
 import com.aurora.player.domain.model.GeniusMix
 import com.aurora.player.domain.model.Track
@@ -25,6 +26,7 @@ class GeniusRepositoryImpl @Inject constructor(
     private val trackAffinityDao: TrackAffinityDao,
     private val trackCooccurrenceDao: TrackCooccurrenceDao,
     private val playEventDao: PlayEventDao,
+    private val skipEventDao: SkipEventDao,
 ) : GeniusRepository {
 
     override suspend fun generateInstantMix(seedTrackId: Long, length: Int): List<Track> {
@@ -50,6 +52,15 @@ class GeniusRepositoryImpl @Inject constructor(
             .eachCount()
         val maxContextCount = contextCountByTrackId.values.maxOrNull() ?: 0
 
+        // DESIGN.md Etap 27 — "avoid recently skipped tracks": SkipEventDao było zbierane od
+        // Etapu 3, ale nigdy nie czytane przy scoringu. Kara liczona od NAJNOWSZEGO skipu danego
+        // utworu (nie liczby skipów — "niedawno" to pytanie o czas, nie o częstość), wygaszana
+        // wykładniczo w ~14 dni — krótsza skala niż cooccurrence (90 dni)/recencyBoost (30 dni),
+        // bo pojedynczy świeży skip ma być realnie odczuwalny, ale nie wieczny.
+        val lastSkipAtByTrackId = skipEventDao.getAll()
+            .groupingBy { it.trackId }
+            .fold(0L) { acc, event -> maxOf(acc, event.timestamp) }
+
         val scoredDescending = allTracks
             .asSequence()
             .filter { it.id != seed.id }
@@ -60,7 +71,10 @@ class GeniusRepositoryImpl @Inject constructor(
                     (contextCountByTrackId[candidate.id] ?: 0).toFloat(),
                     maxContextCount.toFloat(),
                 )
-                candidate to GeniusScoring.score(seed, candidate, affinity, cooccurrence, context, now)
+                val skipPenalty = lastSkipAtByTrackId[candidate.id]
+                    ?.let { decayedSkipPenalty(it, now) }
+                    ?: 0f
+                candidate to GeniusScoring.score(seed, candidate, affinity, cooccurrence, context, now, skipPenalty)
             }
             .sortedByDescending { (_, score) -> score }
             .map { (track, _) -> track }
@@ -73,6 +87,12 @@ class GeniusRepositoryImpl @Inject constructor(
     private fun decayedCooccurrenceWeight(weight: Float, lastSeenAt: Long, nowMs: Long): Float {
         val ageDays = (nowMs - lastSeenAt) / 86_400_000f
         return weight * exp(-ageDays / COOCCURRENCE_DECAY_DAYS)
+    }
+
+    /** DESIGN.md Etap 27 — skip sprzed minut/godzin karze prawie maksymalnie, sprzed miesiąca już ledwo. */
+    private fun decayedSkipPenalty(lastSkipAtMs: Long, nowMs: Long): Float {
+        val ageDays = (nowMs - lastSkipAtMs) / 86_400_000f
+        return exp(-ageDays / SKIP_PENALTY_DECAY_DAYS).coerceIn(0f, 1f)
     }
 
     override suspend fun generateGeniusMixes(maxMixes: Int, tracksPerMix: Int): List<GeniusMix> {
@@ -150,6 +170,7 @@ class GeniusRepositoryImpl @Inject constructor(
 
     private companion object {
         const val COOCCURRENCE_DECAY_DAYS = 90f
+        const val SKIP_PENALTY_DECAY_DAYS = 14f
         const val MIN_TRACKS_FOR_CONTEXT_MIX = 5
     }
 }

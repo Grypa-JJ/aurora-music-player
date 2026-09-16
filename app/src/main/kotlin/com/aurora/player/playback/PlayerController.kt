@@ -9,6 +9,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.aurora.player.di.ApplicationScope
 import com.aurora.player.domain.model.PlaybackState
+import com.aurora.player.domain.model.RepeatMode
 import com.aurora.player.domain.model.Track
 import com.aurora.player.domain.repository.PlaybackHistoryRepository
 import com.aurora.player.domain.repository.PlayerRepository
@@ -61,6 +62,15 @@ class PlayerController @Inject constructor(
                 val mediaController = future.get()
                 controller = mediaController
                 attachListener(mediaController)
+                // Odzwierciedla stan, z jakim MediaController się połączył — mógł go ustawić
+                // poprzedni proces appki albo kontrolki na powiadomieniu systemowym, nie tylko
+                // nasze własne UI (patrz onRepeatModeChanged/onShuffleModeEnabledChanged niżej).
+                _playbackState.update {
+                    it.copy(
+                        repeatMode = mediaController.repeatMode.toDomainRepeatMode(),
+                        isShuffleEnabled = mediaController.shuffleModeEnabled,
+                    )
+                }
                 pendingQueue?.let { (tracks, startIndex) -> playQueue(tracks, startIndex) }
                 pendingQueue = null
             },
@@ -73,6 +83,14 @@ class PlayerController @Inject constructor(
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _playbackState.update { it.copy(isPlaying = isPlaying) }
                 if (isPlaying) startPositionTicker() else positionTickerJob?.cancel()
+            }
+
+            override fun onRepeatModeChanged(repeatMode: Int) {
+                _playbackState.update { it.copy(repeatMode = repeatMode.toDomainRepeatMode()) }
+            }
+
+            override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {
+                _playbackState.update { it.copy(isShuffleEnabled = shuffleModeEnabled) }
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
@@ -193,5 +211,36 @@ class PlayerController @Inject constructor(
     override fun playAt(index: Int) {
         if (index !in currentQueue.indices) return
         controller?.seekTo(index, 0L)
+    }
+
+    override fun cycleRepeatMode() {
+        val mediaController = controller ?: return
+        mediaController.repeatMode = when (mediaController.repeatMode.toDomainRepeatMode()) {
+            RepeatMode.OFF -> Player.REPEAT_MODE_ALL
+            RepeatMode.ALL -> Player.REPEAT_MODE_ONE
+            RepeatMode.ONE -> Player.REPEAT_MODE_OFF
+        }
+        // `onRepeatModeChanged` (attachListener wyżej) i tak zaktualizuje `_playbackState`, ale
+        // nie czekamy na kolejkę zdarzeń Media3 — UI (np. ikona) ma się zmienić na tap, nie z
+        // opóźnieniem round-tripu przez MediaController.
+        _playbackState.update { it.copy(repeatMode = mediaController.repeatMode.toDomainRepeatMode()) }
+    }
+
+    override fun toggleShuffle() {
+        val mediaController = controller ?: return
+        mediaController.shuffleModeEnabled = !mediaController.shuffleModeEnabled
+        _playbackState.update { it.copy(isShuffleEnabled = mediaController.shuffleModeEnabled) }
+    }
+
+    override fun setPlaybackSpeed(speed: Float) {
+        val mediaController = controller ?: return
+        mediaController.setPlaybackSpeed(speed)
+        _playbackState.update { it.copy(playbackSpeed = speed) }
+    }
+
+    private fun Int.toDomainRepeatMode(): RepeatMode = when (this) {
+        Player.REPEAT_MODE_ALL -> RepeatMode.ALL
+        Player.REPEAT_MODE_ONE -> RepeatMode.ONE
+        else -> RepeatMode.OFF
     }
 }

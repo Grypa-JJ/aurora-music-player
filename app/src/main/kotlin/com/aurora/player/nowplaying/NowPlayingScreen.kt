@@ -13,10 +13,12 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
@@ -28,23 +30,31 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.Lyrics
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -54,6 +64,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -65,8 +76,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
@@ -77,6 +91,10 @@ import com.aurora.player.designsystem.components.AuroraVisualizer
 import com.aurora.player.designsystem.components.sharedElementOrSelf
 import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
+import com.aurora.player.domain.model.LyricsLine
+import com.aurora.player.domain.model.LyricsResult
+import com.aurora.player.domain.model.RepeatMode
+import com.aurora.player.domain.model.TrackSource
 import com.aurora.player.eq.EqualizerSheet
 import com.aurora.player.library.LibraryViewModel
 import com.aurora.player.projectm.AmbientGlow
@@ -90,7 +108,12 @@ import dev.chrisbanes.haze.rememberHazeState
 import kotlinx.coroutines.delay
 import java.util.concurrent.TimeUnit
 
-private enum class VisualizerMode { AlbumArt, Inline, Fullscreen }
+/**
+ * "Kanały" w kwadraciku Now Playing (jak przełączanie wejść telewizora) — DESIGN.md Etap 26.
+ * Okładka i Napisy są pomijane w cyklu, gdy nie ma czego pokazać (brak `albumArtUri`/tekstu) —
+ * Wizualizer zawsze istnieje, więc cykl nigdy nie jest pusty.
+ */
+private enum class NowPlayingChannel { AlbumArt, Visualizer, Lyrics }
 
 /**
  * Odtwarzacz pełnoekranowy — patrz DESIGN.md sekcja 3.2. Tło i akcent koloru są wyprowadzone
@@ -114,6 +137,9 @@ fun NowPlayingScreen(
     val context = LocalContext.current
     val playbackState by viewModel.playbackState.collectAsState()
     val palette by viewModel.albumArtPalette.collectAsState()
+    val lyricsResult by viewModel.lyricsResult.collectAsState()
+    val isLoadingLyrics by viewModel.isLoadingLyrics.collectAsState()
+    val favoriteTrackIds by viewModel.favoriteTrackIds.collectAsState()
     val tokens = LocalAuroraTokens.current
     val track = playbackState.currentTrack
 
@@ -143,12 +169,36 @@ fun NowPlayingScreen(
     val backgroundBrush = Brush.verticalGradient(listOf(pulsedBackgroundTop, Color(0xFF06060A)))
     var showEqSheet by remember { mutableStateOf(false) }
     var showSleepTimerSheet by remember { mutableStateOf(false) }
-    var showLyricsSheet by remember { mutableStateOf(false) }
     val sleepTimerRemainingMs by viewModel.sleepTimerRemainingMs.collectAsState()
-    val lyricsResult by viewModel.lyricsResult.collectAsState()
-    val isLoadingLyrics by viewModel.isLoadingLyrics.collectAsState()
-    var visualizerMode by remember { mutableStateOf(VisualizerMode.AlbumArt) }
     val hazeState = rememberHazeState()
+
+    // Etap 26, zgłoszenie: "co jeśli nie ma okładki albumu, ani tekstu — wtedy otwierany jest od
+    // razu wizualizer". Wizualizer zawsze istnieje, więc jest jedynym bezpiecznym fallbackiem —
+    // Napisy NIE wchodzą do tej reguły, bo w momencie otwarcia ekranu appka jeszcze nie wie, czy
+    // dla utworu w ogóle istnieje tekst (ładuje się asynchronicznie), więc i tak nie mogłyby być
+    // kandydatem na kanał startowy. Liczone RAZ przy pierwszym wejściu na ekran (jak dawne
+    // `visualizerMode`), nie przy każdej zmianie utworu — swipe/tap między kanałami ma zostać
+    // tam, gdzie user go zostawił, gdy playback po prostu przechodzi do kolejnej piosenki.
+    val hasAlbumArt = track?.albumArtUri != null
+    var channel by remember { mutableStateOf(if (hasAlbumArt) NowPlayingChannel.AlbumArt else NowPlayingChannel.Visualizer) }
+    var isFullscreen by remember { mutableStateOf(false) }
+
+    val hasLyrics = lyricsResult is LyricsResult.Synced || lyricsResult is LyricsResult.Plain
+    // Kolejność kanałów w cyklu — DESIGN.md Etap 26: okładka → wizualizer → napisy. Pomija kanały
+    // bez treści (patrz enum wyżej); Wizualizer zawsze zostaje, więc lista nigdy nie jest pusta.
+    val availableChannels = buildList {
+        if (hasAlbumArt) add(NowPlayingChannel.AlbumArt)
+        add(NowPlayingChannel.Visualizer)
+        if (hasLyrics) add(NowPlayingChannel.Lyrics)
+    }
+    val defaultChannel = if (hasAlbumArt) NowPlayingChannel.AlbumArt else NowPlayingChannel.Visualizer
+
+    fun cycleChannel(forward: Boolean) {
+        if (availableChannels.isEmpty()) return
+        val currentIndex = availableChannels.indexOf(channel).takeIf { it >= 0 } ?: 0
+        val delta = if (forward) 1 else -1
+        channel = availableChannels[(currentIndex + delta + availableChannels.size) % availableChannels.size]
+    }
 
     // GLES 3.1 to twardy wymóg projectM (patrz DESIGN.md Etap 9) — na słabszych/starszych
     // urządzeniach (minSdk appki to 26, nie wszystkie mają GLES 3.1) appka po cichu spada na
@@ -173,25 +223,26 @@ fun NowPlayingScreen(
     }
 
     // Zgłoszenie: "wizualizer powinien wracać do trybu okładki i zatrzymywać animację, gdy
-    // muzyka przestaje grać". `AuroraVisualizer`/projectM i tak przestają dostawać nowe próbki
-    // (cisza), ale sam WIDOK ma jawnie wrócić do okładki, nie zostać "zawieszony" na wizualizerze.
+    // muzyka przestaje grać" — uogólnione na `defaultChannel` (Etap 26): jeśli okładki nie ma,
+    // "spoczynkiem" jest wizualizer, nie pusty kwadrat.
     LaunchedEffect(playbackState.isPlaying) {
-        if (!playbackState.isPlaying && visualizerMode != VisualizerMode.AlbumArt) {
-            visualizerMode = VisualizerMode.AlbumArt
+        if (!playbackState.isPlaying && channel != defaultChannel) {
+            channel = defaultChannel
+            isFullscreen = false
         }
     }
 
-    // Zgłoszenie: "chcemy by wizualizer był widoczny cały czas, bez ikonek/godziny — jak
+    // Zgłoszenie: "chcemy by wizualizer/napisy były widoczne cały czas, bez ikonek/godziny — jak
     // fullscreen na YT" — immersywny tryb systemowy (paski wracają na przeciągnięcie od
     // krawędzi, nie znikają na stałe) + blokada wygaszania ekranu, dokładnie jak w każdym
-    // odtwarzaczu wideo w pełnym ekranie. Aktywne TYLKO w Fullscreen — `onDispose` przywraca
-    // oba ustawienia przy wyjściu (zmiana trybu lub opuszczenie ekranu), więc nigdy nie zostają
-    // "przyklejone" poza wizualizerem.
+    // odtwarzaczu wideo w pełnym ekranie. Aktywne dla OBU pełnoekranowych kanałów (Wizualizer i
+    // Napisy — Etap 26 rozszerza to z samego wizualizera). `onDispose` przywraca oba ustawienia
+    // przy wyjściu, więc nigdy nie zostają "przyklejone".
     val view = LocalView.current
-    DisposableEffect(visualizerMode) {
+    DisposableEffect(isFullscreen) {
         val window = context.findActivity()?.window
         val insetsController = window?.let { WindowCompat.getInsetsController(it, view) }
-        if (visualizerMode == VisualizerMode.Fullscreen) {
+        if (isFullscreen) {
             insetsController?.systemBarsBehavior =
                 WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             insetsController?.hide(WindowInsetsCompat.Type.systemBars())
@@ -207,11 +258,11 @@ fun NowPlayingScreen(
     // jedno kliknięcie wybudza". `interactionTick` to celowy wzorzec debounce (jak auto-advance
     // presetu w ProjectMSurface) — każda interakcja go zwiększa, co RESTARTUJE poniższy efekt
     // (anuluje stare opóźnienie, zaczyna nowe 5s od zera), więc kontrolki nie znikają w trakcie
-    // aktywnego oglądania, tylko po realnej ciszy.
+    // aktywnego oglądania, tylko po realnej ciszy. Etap 26: ten sam mechanizm dla Napisów.
     var fullscreenControlsVisible by remember { mutableStateOf(true) }
     var fullscreenInteractionTick by remember { mutableStateOf(0) }
-    LaunchedEffect(visualizerMode, fullscreenInteractionTick) {
-        if (visualizerMode != VisualizerMode.Fullscreen) return@LaunchedEffect
+    LaunchedEffect(isFullscreen, fullscreenInteractionTick) {
+        if (!isFullscreen) return@LaunchedEffect
         fullscreenControlsVisible = true
         delay(5000)
         fullscreenControlsVisible = false
@@ -221,19 +272,19 @@ fun NowPlayingScreen(
     // i głupich przycisków, ekran robi się mleczny i widoczny jest tylko dobry, wyraźny widok
     // wizualizera" — ten sam wzorzec debounce co wyżej, ale dla GŁÓWNEGO ekranu (nie
     // pełnoekranowej nakładki, która ma własny, osobny 5s tryb uśpienia). Świadomie NIE liczone
-    // gdy `visualizerMode == Fullscreen` (ten ekran wtedy w ogóle nie jest widoczny).
+    // gdy appka jest już `isFullscreen` (ten ekran wtedy w ogóle nie jest widoczny).
     var nowPlayingIdle by remember { mutableStateOf(false) }
     var nowPlayingInteractionTick by remember { mutableStateOf(0) }
-    LaunchedEffect(visualizerMode, nowPlayingInteractionTick) {
-        if (visualizerMode == VisualizerMode.Fullscreen) return@LaunchedEffect
+    LaunchedEffect(channel, isFullscreen, nowPlayingInteractionTick) {
+        if (isFullscreen) return@LaunchedEffect
         nowPlayingIdle = false
         delay(25000)
         // "widoczny jest tylko... widok wizualizera" — jeśli user zostawił appkę na samej
-        // okładce (nie tapnął, żeby pokazać wizualizer), bezczynność sama odsłania wizualizer,
-        // zamiast zatrzymać się na statycznej okładce. Wymaga isPlaying — ta sama zasada co
-        // ręczny gest (Etap 19: wizualizer nie startuje bez odtwarzania).
-        if (visualizerMode == VisualizerMode.AlbumArt && playbackState.isPlaying) {
-            visualizerMode = VisualizerMode.Inline
+        // okładce (nie tapnął/nie swipnął), bezczynność sama odsłania wizualizer, zamiast
+        // zatrzymać się na statycznej okładce. Wymaga isPlaying — ta sama zasada co ręczny gest
+        // (Etap 19: wizualizer nie startuje bez odtwarzania).
+        if (channel == NowPlayingChannel.AlbumArt && playbackState.isPlaying) {
+            channel = NowPlayingChannel.Visualizer
         }
         nowPlayingIdle = true
     }
@@ -284,6 +335,9 @@ fun NowPlayingScreen(
         }
     }
 
+    val density = LocalDensity.current
+    val swipeThresholdPx = remember(density) { with(density) { 56.dp.toPx() } }
+
     Box(modifier = modifier.fillMaxSize()) {
     Column(
         modifier = Modifier
@@ -291,9 +345,9 @@ fun NowPlayingScreen(
             .background(backgroundBrush)
             .hazeSource(state = hazeState)
             // Etap 21/22: wcięcie systemowe TYLKO na tej treści, nie na wspólnym korzeniu wyżej —
-            // nakładka pełnoekranowa wizualizera (na dole tego pliku) jest RODZEŃSTWEM tego
-            // Column, nie jego potomkiem, więc świadomie NIE dostaje tego wcięcia i może się
-            // wylewać pod paski systemowe (zgłoszenie: "wizualizer ma być na całym ekranie").
+            // nakładka pełnoekranowa (na dole tego pliku) jest RODZEŃSTWEM tego Column, nie jego
+            // potomkiem, więc świadomie NIE dostaje tego wcięcia i może się wylewać pod paski
+            // systemowe (zgłoszenie: "wizualizer ma być na całym ekranie").
             .windowInsetsPadding(WindowInsets.safeDrawing)
             .padding(tokens.spacing.m),
     ) {
@@ -348,15 +402,6 @@ fun NowPlayingScreen(
             )
             Spacer(modifier = Modifier.width(tokens.spacing.m))
             Icon(
-                imageVector = Icons.Filled.Lyrics,
-                contentDescription = "Tekst utworu",
-                tint = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier
-                    .size(24.dp)
-                    .clickable { showLyricsSheet = true },
-            )
-            Spacer(modifier = Modifier.width(tokens.spacing.m))
-            Icon(
                 imageVector = Icons.Filled.Tune,
                 contentDescription = "Equalizer",
                 tint = MaterialTheme.colorScheme.onBackground,
@@ -376,16 +421,6 @@ fun NowPlayingScreen(
                 onStart = viewModel::onStartSleepTimer,
                 onCancel = viewModel::onCancelSleepTimer,
                 onDismiss = { showSleepTimerSheet = false },
-            )
-        }
-
-        if (showLyricsSheet) {
-            LyricsSheet(
-                result = lyricsResult,
-                isLoading = isLoadingLyrics,
-                positionMs = playbackState.positionMs,
-                accentColor = accentColor,
-                onDismiss = { showLyricsSheet = false },
             )
         }
 
@@ -413,32 +448,52 @@ fun NowPlayingScreen(
                 .padding(top = tokens.spacing.xl)
                 .aspectRatio(1f)
                 .clip(RoundedCornerShape(24.dp))
-                .background(MaterialTheme.colorScheme.surface)
+                // Etap 26: kanał Napisy dostaje własne, jednolite tło w kolorze okładki ("nasze
+                // okno na świat" ma kopiować kolor albumu, zgłoszenie usera) zamiast domyślnego
+                // `surface` — ten sam `backgroundTop` co reszta ekranu, żeby paleta była spójna.
+                .background(if (channel == NowPlayingChannel.Lyrics) backgroundTop else MaterialTheme.colorScheme.surface)
                 .sharedElementOrSelf(sharedTransitionScope, animatedVisibilityScope, albumArtSharedKey)
+                // Etap 26: swipe pozioma zmienia kanał (okładka→wizualizer→napisy, cyklicznie) —
+                // tap na samym wizualizerze zostaje zajęty przez zmianę presetu ProjectM (patrz
+                // `onTapCyclesPreset` niżej), więc to jedyny gest, który mógł objąć wszystkie 3
+                // kanały bez kolizji z istniejącym gestem. NIEZWERYFIKOWANE NA ŻYWO — potrzebuje
+                // realnego telefonu, żeby potwierdzić że Compose poprawnie odróżnia ten swipe od
+                // taps należących do `.clickable` niżej i do wewnętrznego gestu ProjectMSurface.
+                .pointerInput(availableChannels) {
+                    var dragTotal = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragTotal = 0f },
+                        onDragEnd = {
+                            when {
+                                dragTotal <= -swipeThresholdPx -> cycleChannel(forward = true)
+                                dragTotal >= swipeThresholdPx -> cycleChannel(forward = false)
+                            }
+                        },
+                    ) { change, dragAmount ->
+                        change.consume()
+                        dragTotal += dragAmount
+                    }
+                }
                 // Etap 19, zgłoszenie: "wciąż można uruchomić wizualizer po zatrzymaniu utworu
-                // kliknięciem, że chodzi bez muzyki" — sam powrót do okładki na pauzie (efekt
-                // niżej) nie wystarczał, bo NIC nie blokowało ponownego ręcznego otwarcia przez
+                // kliknięciem, że chodzi bez muzyki" — sam powrót do spoczynku na pauzie (efekt
+                // wyżej) nie wystarczał, bo NIC nie blokowało ponownego ręcznego otwarcia przez
                 // tap, dopóki playback pozostawał zatrzymany. Gest pokazania wizualizera wymaga
                 // więc teraz OBU warunków: trybu okładki I aktywnego odtwarzania.
-                .clickable(enabled = visualizerMode == VisualizerMode.AlbumArt && playbackState.isPlaying) {
+                .clickable(enabled = channel == NowPlayingChannel.AlbumArt && playbackState.isPlaying) {
                     // Etap 16, zgłoszenie: tap na okładce pokazuje wizualizer w ramce; PONOWNY tap
                     // na samym wizualizerze (obsłużony wewnątrz `ProjectMSurface`, nie tutaj) zmienia
                     // preset zamiast wracać do okładki — powrót jest teraz TYLKO przez jawny X.
-                    visualizerMode = VisualizerMode.Inline
+                    channel = NowPlayingChannel.Visualizer
                 },
             contentAlignment = Alignment.Center,
         ) {
             // Etap 18, zgłoszenie: "silnik ma się uruchomić i wczytać już od początku piosenki,
             // a dopiero po kliknięciu się pokazać" — wizualizer jest teraz ZAWSZE zamontowany od
-            // pojawienia się ekranu (także w trybie okładki, po prostu niewidoczny przez alpha=0),
-            // zamiast tworzyć kontekst GL i kompilować preset od zera dopiero PO tapnięciu. To
-            // była realna, kilkusekundowa przerwa (zweryfikowana na żywo: pusty czarny kwadrat
-            // przez ~3s po każdym powrocie z okładki). `onTapCyclesPreset` wyłączone w trybie
-            // okładki, żeby niewidoczny wizualizer nie podkradał tapów należących do gestu
-            // "pokaż wizualizer" obsługiwanego przez klikalność tego zewnętrznego Box. Wywołanie
-            // NIE jest warunkowane `isProjectMSupported` — `VisualizerSurface` samo przełącza się
-            // na lekki fallback `AuroraVisualizer` na starszych urządzeniach (patrz jej definicja
-            // wyżej), więc ten sam mechanizm pre-warmu obejmuje obie ścieżki.
+            // pojawienia się ekranu (niewidoczny przy Okładce/Napisach przez alpha=0), zamiast
+            // tworzyć kontekst GL i kompilować preset od zera dopiero PO tapnięciu. To była realna,
+            // kilkusekundowa przerwa (zweryfikowana na żywo: pusty czarny kwadrat przez ~3s po
+            // każdym powrocie z okładki). `onTapCyclesPreset` wyłączone poza kanałem Wizualizer,
+            // żeby niewidoczny wizualizer nie podkradał tapów należących do innych kanałów.
             //
             // ŚWIADOMIE `size(1.dp)` zamiast samego `alpha(0f)` na pełnym rozmiarze: zgłoszone i
             // zweryfikowane na żywo (emulator + telefon usera równolegle) — pełnowymiarowy,
@@ -449,16 +504,12 @@ fun NowPlayingScreen(
             // zostają "ciepłe" (`engine.setWindowSize` przy odsłonięciu to tani resize viewportu,
             // NIE ponowne tworzenie kontekstu GL/kompilacja presetu).
             VisualizerSurface(
-                if (visualizerMode == VisualizerMode.AlbumArt) {
-                    Modifier.size(1.dp).alpha(0f)
-                } else {
-                    Modifier.fillMaxSize()
-                },
+                if (channel == NowPlayingChannel.Visualizer) Modifier.fillMaxSize() else Modifier.size(1.dp).alpha(0f),
                 compactControls = true,
-                onTapCyclesPreset = visualizerMode != VisualizerMode.AlbumArt,
+                onTapCyclesPreset = channel == NowPlayingChannel.Visualizer,
             )
-            when (visualizerMode) {
-                VisualizerMode.AlbumArt -> {
+            when (channel) {
+                NowPlayingChannel.AlbumArt -> {
                     if (track?.albumArtUri != null) {
                         AsyncImage(
                             model = track.albumArtUri,
@@ -476,54 +527,70 @@ fun NowPlayingScreen(
                             .size(22.dp),
                     )
                 }
-                VisualizerMode.Inline -> {
+                NowPlayingChannel.Visualizer -> {
                     CloseVisualizerButton(
                         modifier = Modifier.align(Alignment.TopStart).padding(tokens.spacing.s),
-                        onClick = { visualizerMode = VisualizerMode.AlbumArt },
+                        onClick = { channel = defaultChannel },
                     )
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.BottomEnd)
-                            .padding(tokens.spacing.m)
-                            .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
-                            .clickable { visualizerMode = VisualizerMode.Fullscreen },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Fullscreen,
-                            contentDescription = "Pełny ekran",
-                            tint = Color.White.copy(alpha = 0.9f),
-                            modifier = Modifier.size(24.dp),
-                        )
-                    }
+                    FullscreenExpandButton(
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(tokens.spacing.m),
+                        onClick = { isFullscreen = true },
+                    )
                 }
-                VisualizerMode.Fullscreen -> {
-                    // Treść wizualizera renderuje się w tym momencie we WŁASNEJ instancji w
-                    // nakładce pełnoekranowej poniżej (świadomie bez movableContentOf, patrz jej
-                    // komentarz) — ramka zostaje pusta, żeby nie renderować dwóch kopii naraz.
+                NowPlayingChannel.Lyrics -> {
+                    LyricsChannelContent(
+                        result = lyricsResult,
+                        isLoading = isLoadingLyrics,
+                        positionMs = playbackState.positionMs,
+                        accentColor = accentColor,
+                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(24.dp)),
+                    )
+                    CloseVisualizerButton(
+                        modifier = Modifier.align(Alignment.TopStart).padding(tokens.spacing.s),
+                        onClick = { channel = defaultChannel },
+                    )
+                    FullscreenExpandButton(
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(tokens.spacing.m),
+                        onClick = { isFullscreen = true },
+                    )
                 }
             }
         }
         }
 
-        Column(
+        Row(
             modifier = Modifier
                 .padding(top = tokens.spacing.xl)
                 .alpha(nowPlayingChromeAlpha),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = track?.title ?: "Nic nie gra",
-                style = AuroraTextStyles.Display,
-                color = MaterialTheme.colorScheme.onBackground,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = track?.artist.orEmpty(),
-                style = AuroraTextStyles.Body,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                modifier = Modifier.padding(top = tokens.spacing.xs),
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = track?.title ?: "Nic nie gra",
+                    style = AuroraTextStyles.Display,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = track?.artist.orEmpty(),
+                    style = AuroraTextStyles.Body,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                    modifier = Modifier.padding(top = tokens.spacing.xs),
+                )
+            }
+            if (track != null) {
+                val isFavorite = favoriteTrackIds.contains(track.id)
+                Icon(
+                    imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                    contentDescription = if (isFavorite) "Usuń z ulubionych" else "Dodaj do ulubionych",
+                    tint = if (isFavorite) accentColor else MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier
+                        .padding(start = tokens.spacing.m)
+                        .size(28.dp)
+                        .clickable { viewModel.onToggleFavorite(track.id) },
+                )
+            }
         }
 
         // Dla utworów z chmury (Google Drive) długość nie jest znana z metadanych z góry —
@@ -571,6 +638,39 @@ fun NowPlayingScreen(
             }
         }
 
+        // Prędkość odtwarzania — DESIGN.md Etap 25, tylko dla podcastów (muzyka prawie nigdy jej
+        // nie potrzebuje, a stały rząd chipów zaśmiecałby ekran odtwarzania muzyki).
+        if (track?.source == TrackSource.PODCAST) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = tokens.spacing.s)
+                    .alpha(nowPlayingChromeAlpha),
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                listOf(0.75f, 1f, 1.25f, 1.5f, 2f).forEach { speed ->
+                    val isActive = playbackState.playbackSpeed == speed
+                    Text(
+                        text = "${if (speed % 1f == 0f) speed.toInt() else speed}x",
+                        style = AuroraTextStyles.Label,
+                        color = if (isActive) accentColor else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                        modifier = Modifier
+                            .padding(horizontal = tokens.spacing.xs)
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(if (isActive) accentColor.copy(alpha = 0.15f) else Color.Transparent)
+                            .clickable { viewModel.onSetPlaybackSpeed(speed) }
+                            .padding(horizontal = tokens.spacing.s, vertical = tokens.spacing.xs),
+                    )
+                }
+            }
+        }
+
+        // Etap 26, zgłoszenie: "ubogi panel sterowania — gdzie jest serduszko/zapętlij/losowe
+        // odtwarzanie". Serduszko przeniosło się obok tytułu wyżej (wzorzec Spotify); tu zostają
+        // Losowo/Poprzedni/Play/Następny/Powtarzaj w jednym rzędzie transportu.
+        val canShuffle = playbackState.queue.size > 1
+        val repeatIcon = if (playbackState.repeatMode == RepeatMode.ONE) Icons.Filled.RepeatOne else Icons.Filled.Repeat
+        val repeatActive = playbackState.repeatMode != RepeatMode.OFF
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -580,10 +680,21 @@ fun NowPlayingScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
+                imageVector = Icons.Filled.Shuffle,
+                contentDescription = "Losowa kolejność",
+                tint = if (playbackState.isShuffleEnabled) accentColor else MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier
+                    .alpha(if (canShuffle) 1f else 0.3f)
+                    .size(22.dp)
+                    .clickable(enabled = canShuffle, onClick = viewModel::onToggleShuffle),
+            )
+
+            Icon(
                 imageVector = Icons.Filled.SkipPrevious,
                 contentDescription = "Poprzedni",
                 tint = MaterialTheme.colorScheme.onBackground,
                 modifier = Modifier
+                    .padding(start = tokens.spacing.l)
                     .size(28.dp)
                     .clickable(onClick = viewModel::onSkipPrevious),
             )
@@ -613,6 +724,16 @@ fun NowPlayingScreen(
                     .size(28.dp)
                     .clickable(onClick = viewModel::onSkipNext),
             )
+
+            Icon(
+                imageVector = repeatIcon,
+                contentDescription = "Powtarzaj",
+                tint = if (repeatActive) accentColor else MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier
+                    .padding(start = tokens.spacing.l)
+                    .size(22.dp)
+                    .clickable(onClick = viewModel::onCycleRepeatMode),
+            )
         }
     }
 
@@ -632,27 +753,38 @@ fun NowPlayingScreen(
             )
         }
 
-        // Pełnoekranowa nakładka — WŁASNA instancja silnika (nie ta sama co w ramce inline, patrz
-        // komentarz przy VisualizerSurface: świadomie bez movableContentOf po testach na
-        // emulatorze). Etap 16, zgłoszenie: tap na wizualizerze zmienia preset (obsłużone
-        // wewnątrz ProjectMSurface), powrót do okładki TYLKO przez jawny X w rogu — stary gest
-        // "tap gdziekolwiek zwija" usunięty, bo kolidował z nowym "tap = następny preset".
-        if (visualizerMode == VisualizerMode.Fullscreen) {
+        // Pełnoekranowa nakładka — WŁASNA instancja silnika wizualizera (nie ta sama co w ramce
+        // inline, patrz komentarz przy VisualizerSurface: świadomie bez movableContentOf po
+        // testach na emulatorze). Etap 16, zgłoszenie: tap na wizualizerze zmienia preset
+        // (obsłużone wewnątrz ProjectMSurface), powrót TYLKO przez jawny X w rogu — stary gest
+        // "tap gdziekolwiek zwija" usunięty, bo kolidował z nowym "tap = następny preset". Etap 26
+        // rozszerza tę samą nakładkę na kanał Napisy.
+        if (isFullscreen) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black),
+                    .background(if (channel == NowPlayingChannel.Lyrics) backgroundTop else Color.Black),
             ) {
-                VisualizerSurface(
-                    Modifier.fillMaxSize(),
-                    compactControls = false,
-                    controlsVisible = fullscreenControlsVisible,
-                    onInteraction = { fullscreenInteractionTick++ },
-                )
+                when (channel) {
+                    NowPlayingChannel.Visualizer -> VisualizerSurface(
+                        Modifier.fillMaxSize(),
+                        compactControls = false,
+                        controlsVisible = fullscreenControlsVisible,
+                        onInteraction = { fullscreenInteractionTick++ },
+                    )
+                    NowPlayingChannel.Lyrics -> LyricsChannelContent(
+                        result = lyricsResult,
+                        isLoading = isLoadingLyrics,
+                        positionMs = playbackState.positionMs,
+                        accentColor = accentColor,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    NowPlayingChannel.AlbumArt -> Unit // fullscreen niedostępny z tego kanału
+                }
                 if (fullscreenControlsVisible) {
                     CloseVisualizerButton(
                         modifier = Modifier.align(Alignment.TopStart).padding(tokens.spacing.m),
-                        onClick = { visualizerMode = VisualizerMode.AlbumArt },
+                        onClick = { isFullscreen = false },
                     )
                 } else {
                     // Kontrolki śpią — pełnoekranowa, niewidoczna nakładka na wierzchu, żeby
@@ -688,7 +820,7 @@ private fun formatTime(ms: Long): String {
     return "%d:%02d".format(minutes, seconds)
 }
 
-/** Jedyny sposób powrotu do okładki z wizualizera (ramka lub pełny ekran) — Etap 16, zgłoszenie. */
+/** Jedyny sposób powrotu do kanału domyślnego z Wizualizera/Napisów (ramka lub pełny ekran). */
 @Composable
 private fun CloseVisualizerButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     // Box 48x48dp (minimalny touch target Material) wokół 28dp ikony — sam .size(28.dp).clickable()
@@ -696,8 +828,8 @@ private fun CloseVisualizerButton(onClick: () -> Unit, modifier: Modifier = Modi
     // Etap 21/22, zgłoszenie: "X nie ma wchodzić pod pasek telefonu" — w ramce inline ten przycisk
     // siedzi już wewnątrz wcięcia rodzica (patrz Column z windowInsetsPadding wyżej), więc to tu
     // jest no-opem (insety już skonsumowane). W nakładce pełnoekranowej (świadomie BEZ wcięcia na
-    // samym Boxie, żeby tło wizualizera mogło się wylewać pod paski) to jedyne miejsce, które
-    // faktycznie odsuwa X od paska statusu/notcha — działa wszędzie, jeden kod, zero rozgałęzień.
+    // samym Boxie, żeby tło mogło się wylewać pod paski) to jedyne miejsce, które faktycznie
+    // odsuwa X od paska statusu/notcha — działa wszędzie, jeden kod, zero rozgałęzień.
     Box(
         modifier = modifier
             .windowInsetsPadding(WindowInsets.safeDrawing)
@@ -707,9 +839,102 @@ private fun CloseVisualizerButton(onClick: () -> Unit, modifier: Modifier = Modi
     ) {
         Icon(
             imageVector = Icons.Filled.Close,
-            contentDescription = "Zamknij wizualizer",
+            contentDescription = "Zamknij",
             tint = Color.White.copy(alpha = 0.9f),
             modifier = Modifier.size(28.dp),
         )
+    }
+}
+
+/** Rozwiń Wizualizer/Napisy na pełny ekran — Etap 26 (dawniej tylko wizualizer, Etap 16). */
+@Composable
+private fun FullscreenExpandButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Fullscreen,
+            contentDescription = "Pełny ekran",
+            tint = Color.White.copy(alpha = 0.9f),
+            modifier = Modifier.size(24.dp),
+        )
+    }
+}
+
+/**
+ * Treść kanału Napisy — DESIGN.md Etap 26. [LyricsResult.Synced] przewija się jak karaoke
+ * ([positionMs] → podświetlona bieżąca linia); [LyricsResult.Plain] to statyczny blok (LRCLIB nie
+ * zawsze ma zsynchronizowaną wersję). Współdzielone między ramką w kwadraciku i pełnym ekranem —
+ * jeden kod, dwa rozmiary przez [modifier].
+ */
+@Composable
+private fun LyricsChannelContent(
+    result: LyricsResult?,
+    isLoading: Boolean,
+    positionMs: Long,
+    accentColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        when {
+            isLoading -> CircularProgressIndicator(color = accentColor)
+            result == null || result is LyricsResult.NotFound -> Text(
+                text = "Brak tekstu dla tego utworu",
+                style = AuroraTextStyles.Body,
+                color = Color.White.copy(alpha = 0.6f),
+            )
+            result is LyricsResult.Plain -> LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 24.dp, vertical = 24.dp),
+            ) {
+                item {
+                    Text(
+                        text = result.text,
+                        style = AuroraTextStyles.Body,
+                        color = Color.White,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+            result is LyricsResult.Synced -> SyncedLyricsKaraoke(
+                lines = result.lines,
+                positionMs = positionMs,
+                accentColor = accentColor,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SyncedLyricsKaraoke(lines: List<LyricsLine>, positionMs: Long, accentColor: Color) {
+    val listState = rememberLazyListState()
+    val currentIndex by remember(lines) {
+        derivedStateOf { lines.indexOfLast { it.timestampMs <= positionMs }.coerceAtLeast(0) }
+    }
+
+    LaunchedEffect(currentIndex) {
+        // Ujemny offset zamiast samego scrollToItem — bieżąca linia ląduje bliżej środka
+        // widocznego obszaru zamiast przyklejać się do samej góry przy każdej zmianie.
+        listState.animateScrollToItem(index = currentIndex, scrollOffset = -200)
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(vertical = 48.dp, horizontal = 20.dp),
+    ) {
+        itemsIndexed(lines) { index, line ->
+            Text(
+                text = line.text,
+                style = if (index == currentIndex) AuroraTextStyles.Title else AuroraTextStyles.Body,
+                color = if (index == currentIndex) accentColor else Color.White.copy(alpha = 0.45f),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+            )
+        }
     }
 }

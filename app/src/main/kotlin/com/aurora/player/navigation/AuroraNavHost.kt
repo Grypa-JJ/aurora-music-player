@@ -20,7 +20,10 @@ import com.aurora.player.licenses.OpenSourceLicensesScreen
 import com.aurora.player.nowplaying.NowPlayingScreen
 import com.aurora.player.playlist.PlaylistDetailScreen
 import com.aurora.player.playlist.PlaylistsScreen
+import com.aurora.player.podcast.PodcastDetailScreen
+import com.aurora.player.podcast.PodcastsScreen
 import com.aurora.player.queue.QueueScreen
+import com.aurora.player.radio.RadioScreen
 import java.net.URLDecoder
 import java.net.URLEncoder
 
@@ -35,6 +38,11 @@ private const val ROUTE_PLAYLIST_DETAIL = "playlist/{playlistId}"
 private const val ROUTE_QUEUE = "queue"
 private const val ROUTE_ALBUM_DETAIL = "album/{albumName}/{albumArtist}"
 private const val ROUTE_ARTIST_DETAIL = "artist/{artistName}"
+private const val ROUTE_RADIO = "radio"
+private const val ROUTE_PODCASTS = "podcasts"
+private const val ROUTE_PODCAST_DETAIL = "podcast_detail/{feedUrl}"
+
+/** feedUrl to pełny URL, więc trafia w trasę zakodowany tak samo jak nazwy albumów/wykonawców. */
 
 /** Nazwy albumów/wykonawców mogą zawierać "/", "&" itd. — trasa musi je kodować, nie brać wprost. */
 private fun encodeRouteArg(value: String): String = URLEncoder.encode(value, "UTF-8")
@@ -72,6 +80,8 @@ fun AuroraNavHost(
                         navController.navigate("album/${encodeRouteArg(name)}/${encodeRouteArg(artist)}")
                     },
                     onOpenArtist = { name -> navController.navigate("artist/${encodeRouteArg(name)}") },
+                    onOpenRadio = { navController.navigate(ROUTE_RADIO) },
+                    onOpenPodcasts = { navController.navigate(ROUTE_PODCASTS) },
                     sharedTransitionScope = this@SharedTransitionLayout,
                     animatedVisibilityScope = this@composable,
                 )
@@ -160,6 +170,30 @@ fun AuroraNavHost(
                 ArtistDetailScreen(
                     viewModel = libraryViewModel,
                     artistName = artistName,
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable(ROUTE_RADIO) {
+                RadioScreen(
+                    viewModel = libraryViewModel,
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable(ROUTE_PODCASTS) {
+                PodcastsScreen(
+                    viewModel = libraryViewModel,
+                    onBack = { navController.popBackStack() },
+                    onOpenPodcast = { feedUrl -> navController.navigate("podcast_detail/${encodeRouteArg(feedUrl)}") },
+                )
+            }
+            composable(
+                ROUTE_PODCAST_DETAIL,
+                arguments = listOf(navArgument("feedUrl") { type = NavType.StringType }),
+            ) { backStackEntry ->
+                val feedUrl = decodeRouteArg(backStackEntry.arguments?.getString("feedUrl").orEmpty())
+                PodcastDetailScreen(
+                    viewModel = libraryViewModel,
+                    feedUrl = feedUrl,
                     onBack = { navController.popBackStack() },
                 )
             }

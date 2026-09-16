@@ -13,6 +13,9 @@
     <!-- Biblioteka w chmurze (Google Drive) — patrz DESIGN.md, sekcja "Chmura". -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Radio (Etap 31) — tylko żeby zaproponować stacje z kraju usera; opcjonalna, appka ma
+         pełnoprawny ręczny wybór kraju gdy user odmówi lub geokodowanie się nie powiedzie. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <application
         android:name=".AuroraApplication"

@@ -7,9 +7,12 @@ import com.aurora.player.data.database.dao.FavoriteTrackDao
 import com.aurora.player.data.database.dao.LyricsCacheDao
 import com.aurora.player.data.database.dao.PlayEventDao
 import com.aurora.player.data.database.dao.PlaylistDao
+import com.aurora.player.data.database.dao.PodcastDao
 import com.aurora.player.data.database.dao.SkipEventDao
 import com.aurora.player.data.database.dao.TrackAffinityDao
+import com.aurora.player.data.database.dao.TrackAudioMetadataDao
 import com.aurora.player.data.database.dao.TrackCooccurrenceDao
+import com.aurora.player.data.database.dao.TrackMetadataOverrideDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -51,4 +54,15 @@ object DatabaseModule {
 
     @Provides
     fun provideLyricsCacheDao(database: AuroraDatabase): LyricsCacheDao = database.lyricsCacheDao()
+
+    @Provides
+    fun provideTrackMetadataOverrideDao(database: AuroraDatabase): TrackMetadataOverrideDao =
+        database.trackMetadataOverrideDao()
+
+    @Provides
+    fun provideTrackAudioMetadataDao(database: AuroraDatabase): TrackAudioMetadataDao =
+        database.trackAudioMetadataDao()
+
+    @Provides
+    fun providePodcastDao(database: AuroraDatabase): PodcastDao = database.podcastDao()
 }

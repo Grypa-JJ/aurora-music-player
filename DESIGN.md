@@ -881,4 +881,174 @@ Appka dziś czyta WYŁĄCZNIE to, co da `MediaStore` (`MediaStoreScanner.kt`) �
 
 ### Świadomie NIE w tym etapie
 
-**Naprawa błędnych/brakujących tytułów i wykonawców przez MusicBrainz** — user potwierdził "tak", ale to osobny, samodzielny kawałek pracy: wymaga (1) heurystyki "ten tag wygląda źle" (pusty/placeholder typu "Track 01"/nazwa pliku), (2) zapytania do MusicBrainz (inny kontrakt API niż LRCLIB, wymaga nagłówka `User-Agent` z kontaktem wg ich zasad + limitu ~1 zapytanie/sekundę), (3) nowej tabeli nadpisań (`track_metadata_override` czy podobnej — MediaStore nie jest bezpiecznie zapisywalny ze scoped storage) i scalenia jej w `TrackRepositoryImpl` przy odczycie. Nie zrobione teraz, żeby nie mieszać dwóch różnych kontraktów sieciowych i dwóch różnych modeli cache'u w jednej rundzie — naturalny następny krok, nie przeoczenie.
+**Naprawa błędnych/brakujących tytułów i wykonawców przez MusicBrainz** — user potwierdził "tak", ale to osobny, samodzielny kawałek pracy: wymaga (1) heurystyki "ten tag wygląda źle" (pusty/placeholder typu "Track 01"/nazwa pliku), (2) zapytania do MusicBrainz (inny kontrakt API niż LRCLIB, wymaga nagłówka `User-Agent` z kontaktem wg ich zasad + limitu ~1 zapytanie/sekundę), (3) nowej tabeli nadpisań (`track_metadata_override` czy podobnej — MediaStore nie jest bezpiecznie zapisywalny ze scoped storage) i scalenia jej w `TrackRepositoryImpl` przy odczycie. Nie zrobione teraz, żeby nie mieszać dwóch różnych kontraktów sieciowych i dwóch różnych modeli cache'u w jednej rundzie — zrobione w następnej rundzie, patrz Etap 25.
+
+## Etap 25: Naprawa błędnych/brakujących tytułów i wykonawców — MusicBrainz
+
+*Źródło: kontynuacja Etapu 24 — user: "dalej dalej" po propozycji zrobienia tego jako osobnej rundy.*
+
+### Projekt
+
+**Heurystyka "ten tag wygląda źle" — `TrackMetadataHeuristics.looksIncomplete()` (domain, pure Kotlin).** Świadomie konserwatywna: puste pole, dokładne placeholdery już używane w `MediaStoreScanner` (`"Nieznany utwór"`/`"Nieznany wykonawca"`), albo wzorzec typu `"Track 01"`/`"untitled"`/`"unknown"`. Fałszywy negatyw (nie złapany zły tag) jest tańszy niż fałszywy pozytyw (appka nadpisuje poprawny, tylko nietypowo nazwany utwór) — żadnego rozmytego dopasowania, tylko jawne wzorce.
+
+**Sieć — MusicBrainz (`musicbrainz.org/ws/2/recording`), wolny tekst z nazwy pliku jako zapytanie** (jedyny sygnał, jaki appka ma, gdy tytuł/wykonawca są puste/placeholder). Ten sam brak Retrofit/Moshi co LRCLIB — `org.json` wystarcza na jedno pole `recordings[0]` (`title`/`artist-credit[0].name`/`releases[0].title`). `MusicBrainzRateLimiter` (Hilt singleton, `Mutex` + `delay`) pilnuje ~1 zapytania/sekundę wymaganego przez MusicBrainz dla anonimowych klientów — appka odpytuje sekwencyjnie, jeden utwór na raz, więc pojedynczy limiter globalny wystarcza. `USER_AGENT` w `MusicBrainzClient` ma jawny komentarz ostrzegający, że przed publicznym wydaniem potrzebuje realnego kontaktu, nie tylko nazwy appki — inaczej MusicBrainz może zacząć throttlować/blokować.
+
+**Cache — nowa tabela Room `track_metadata_override` (`aurora.db` v5→v6, `TrackMetadataOverrideEntity`/`TrackMetadataOverrideDao`).** Ta sama zasada "zapisz też negatyw" co `lyrics_cache` z Etapu 24: `title`/`artist`/`album` wszystkie `null` = appka już próbowała i nie znalazła dopasowania, `matchedAtMs` i tak ustawione, więc `trackId` nigdy nie trafia do sieci drugi raz. `TrackRepositoryImpl.getAllTracks()` nakłada nadpisania na wynik `MediaStoreScanner` PRZED zwróceniem listy — czysto lokalny odczyt Room, zero sieci, więc zwykłe ładowanie biblioteki się nie spowalnia.
+
+**Orkiestracja — `MetadataEnrichmentRepository.enrichLibrary(tracks): Flow<Track>` (domain interfejs, `MetadataEnrichmentRepositoryImpl` w `app` — ten sam podział warstw co Lyrics: sieć wymaga `app`, kontrakt w `domain`).** Filtruje kandydatów przez heurystykę, dla każdego pyta cache (pomija jeśli już sprawdzony), inaczej pyta MusicBrainz i **emituje utwór PO KOLEI** w miarę jak dopasowania wracają — nie czeka na całą partię, więc UI może aktualizować listę utwór po utworze zamiast zamrażać się na czas rate-limitu. `LibraryViewModel.refresh()` odpala to jako osobną korutynę PO ustawieniu pierwszego stanu `tracks` (nie opóźnia pierwszego wyświetlenia biblioteki) i podmienia trafione utwory w `uiState.tracks` w miarę napływania.
+
+### Zweryfikowane
+
+`:domain:compileKotlin`, `:data:compileDebugKotlin`, `:app:compileDebugKotlin` (`--rerun-tasks`, bez cache) — wszystkie zielone. Weryfikacja na żywo (realna biblioteka z plikami o złych tagach, potwierdzenie że MusicBrainz faktycznie trafia i że appka nie strzela częściej niż raz/sekundę) czeka na dostęp do telefonu/emulatora, razem z resztą zaległej weryfikacji z Etapów 21/24.
+
+### Świadomie NIE w tym etapie
+
+Ręczna edycja/odrzucenie sugestii przez usera (appka dziś nadpisuje automatycznie, bez potwierdzenia) — rozsądne dla oczywistych placeholderów, ale gdyby heurystyka kiedyś zaczęła łapać fałszywe pozytywy, to naturalne miejsce na krok pośredni ("zaproponuj, nie nadpisuj"). Zapis poprawionych tagów z powrotem do samego pliku (ID3) — appka trzyma nadpisanie wyłącznie w Room, oryginalny plik i `MediaStore` zostają nietknięte.
+
+## Etap 26: Napisy jako "kanał" w kwadraciku Now Playing + panel transportu (ulubione/powtarzaj/losowo)
+
+*Źródło: user obejrzał zrzut ekranu żywej appki i zgłosił dwie rzeczy naraz: (1) oddzielny przycisk/arkusz Napisów z Etapu 24 ma zniknąć — napisy mają grać w tym samym kwadraciku co wizualizer, "jak nasze okno na świat", w kolejności okładka→wizualizer→napisy jak kanały telewizora, na tych samych zasadach fullscreen co wizualizer (always-on, kontrolki znikają po 5s, bez obracania ekranu); (2) panel transportu na dole to tylko Poprzedni/Play/Następny — brakuje serduszka (ulubione), powtarzania i losowej kolejności. User jawnie zastrzegł: "zanim dodasz cokolwiek to zapytaj gdzie to ma się znaleźć bez zgadywania" — 4 pytania doprecyzowujące (gest zmiany kanału, co dzieje się z wizualizerem pod napisami, kontrolki fullscreen, zachowanie gdy brak tekstu) zadane i odpowiedziane PRZED napisaniem kodu.*
+
+### Kanały Now Playing (zastępuje `LyricsSheet` z Etapu 24)
+
+`LyricsSheet.kt`/przycisk w górnym rzędzie **usunięte** — funkcjonalnie zastąpione przez trzeci "kanał" w tym samym kwadraciku, gdzie dotąd żył tylko wizualizer/okładka. `VisualizerMode { AlbumArt, Inline, Fullscreen }` zastąpione przez `NowPlayingChannel { AlbumArt, Visualizer, Lyrics }` (treść) + osobny `isFullscreen: Boolean` (rozmiar) — te dwa wymiary były dotąd spleciony w jeden enum, co nie skalowało się na trzecią treść.
+
+**Decyzje z pytań doprecyzowujących:**
+1. **Gest zmiany kanału — swipe poziomy** po kwadraciku (nie tap, bo tap na wizualizerze jest już zajęty przez zmianę presetu ProjectM). Tap na okładce → Wizualizer zostaje jak było (Etap 16); swipe działa z każdego kanału, cyklicznie, przez `availableChannels`.
+2. **Wizualizer zatrzymuje się pod Napisami** — kanał Napisy dostaje WŁASNE, jednolite tło (`backgroundTop`, ten sam derywowany kolor okładki co reszta ekranu — dosłownie "tło tekstu kopiuje kolor albumu"), `ProjectMSurface` zostaje zmontowany w tle na `1dp`/`alpha=0` (ten sam trik pre-warm co przy Okładce, Etap 18), nie renderowany na pełen ekran.
+3. **Fullscreen Napisów — tylko X**, żadnych ikon presetów/ustawień (te są pojęciami ProjectM, nic nie znaczą dla przewijanego tekstu). Ta sama nakładka co wizualizer: `DisposableEffect`/immersywne paski/`keepScreenOn` (Etap 22) rozszerzone z `visualizerMode == Fullscreen` na ogólne `isFullscreen`, więc Napisy dostają dokładnie ten sam always-on + auto-hide-po-5s za darmo, bez nowego mechanizmu.
+4. **Kanał Napisy pomijany w cyklu, gdy nie ma tekstu** — `availableChannels` filtruje po `hasLyrics` (`LyricsResult.Synced`/`Plain`), `NotFound`/`null` (jeszcze się ładuje) wypada z listy. To samo pomijanie zastosowane też do Okładki (`hasAlbumArt`), co dało naturalne rozwiązanie dodatkowego zgłoszenia usera w trakcie sesji: **"jeśli nie ma okładki ANI tekstu, appka od razu otwiera wizualizer"** — `defaultChannel = if (hasAlbumArt) AlbumArt else Visualizer` jako kanał startowy; Wizualizer zawsze istnieje, więc to jedyny bezpieczny fallback (Napisy nie mogą być kandydatem na start, bo ich dostępność jeszcze nie jest znana w momencie otwarcia ekranu — ładują się asynchronicznie).
+
+**Karaoke — `SyncedLyricsKaraoke`** (nowy prywatny composable w `NowPlayingScreen.kt`, zastępuje usunięty `LyricsSheet`): `LazyColumn` + `derivedStateOf { lines.indexOfLast { it.timestampMs <= positionMs } }`, `animateScrollToItem` na bieżącą linię przy każdej zmianie indeksu, podświetlenie kolorem akcentu okładki. Współdzielony 1:1 między ramką w kwadraciku i pełnym ekranem (jeden kod, dwa rozmiary przez `Modifier`).
+
+**NIEZWERYFIKOWANE NA ŻYWO — ryzyko gestów.** Swipe (nowy `pointerInput`+`detectHorizontalDragGestures`) współistnieje na tym samym Boxie z istniejącym `.clickable` (tap Okładka→Wizualizer) i z wewnętrznym gestem tap-cykluje-preset w `ProjectMSurface`. Kod jest napisany zgodnie z tym, jak Compose *powinien* rozróżniać tap od swipe (próg przesunięcia w `detectHorizontalDragGestures`), ale to jedna z tych rzeczy, których nie da się uczciwie nazwać "działa", dopóki ktoś fizycznie nie przeciągnie palcem po telefonie — zgodnie z zasadą tego dziennika (Etap 14/16/19: zweryfikowane na żywo, nie samą kompilacją).
+
+### Panel transportu — ulubione/powtarzanie/losowo
+
+Zgłoszenie: "ubogi panel sterowania — gdzie serduszko, zapętlenie, losowe odtwarzanie". Ulubione miało już pełną infrastrukturę (Etap 22, `FavoritesRepository`) — brakowało wyłącznie ikony w Now Playing (dodana obok tytułu/wykonawcy, wzorzec Spotify). Powtarzanie i losowa kolejność nie istniały wcale — nowe od zera:
+
+- **`PlaybackState`** — `repeatMode: RepeatMode` (`OFF`/`ALL`/`ONE`, nowy `domain/model/RepeatMode.kt`) + `isShuffleEnabled: Boolean`.
+- **`PlayerRepository`** — `cycleRepeatMode()`/`toggleShuffle()`. `PlayerController` mapuje 1:1 na `Player.repeatMode`/`Player.shuffleModeEnabled` z Media3 (istniało w silniku od zawsze, appka po prostu tego nie czytała/pisała) — `onRepeatModeChanged`/`onShuffleModeEnabledChanged` w `Player.Listener` trzymają `_playbackState` zgodny ze stanem NAWET gdy zmieniony z zewnątrz (np. przez kontrolki na powiadomieniu systemowym MediaSession, nie tylko z naszego UI).
+- **UI** — rząd transportu rozszerzony do Losowo/Poprzedni/Play/Następny/Powtarzaj. Losowo wyszarzone i niekliknięte, gdy `playbackState.queue.size <= 1` (user: "losowe odtwarzanie może być użyte, gdy JEST co losowo odtwarzać") — jedyny w tym etapie przypadek jawnie wyłączonej kontrolki, nie tylko nieaktywnej wizualnie. Powtarzanie ma dwie różne ikony (`Repeat`/`RepeatOne`) zależnie od trybu, nie jeden kolor na tej samej ikonie.
+
+### Zweryfikowane
+
+`:domain:compileKotlin`, `:data:compileDebugKotlin`, `:app:compileDebugKotlin` (`--rerun-tasks`, bez cache) — wszystkie zielone. Weryfikacja na żywo (gest swipe vs tap, karaoke na realnym utworze z LRCLIB, repeat/shuffle przez `adb`/realny telefon) czeka na dostęp do urządzenia — patrz ostrzeżenie o gestach wyżej, to NAJWAŻNIEJSZA zaległa weryfikacja z całej tej rundy, nie formalność.
+
+### Świadomie NIE w tym etapie
+
+Reakcja appki na zmianę dostępności kanału W TRAKCIE odtwarzania (np. Napisy dociągają się PO otwarciu ekranu i user już siedzi na Wizualizerze) — appka świadomie NIE przeskakuje sama na nowo dostępny kanał, żeby nie "szarpać" ekranu bez akcji usera; `defaultChannel`/dostępność liczą się przy starcie i przy swipe'ach, nie jako ciągła reakcja na `hasLyrics`. Kontrolki fullscreen Napisów identyczne wizualnie z Wizualizerem (pytanie doprecyzowujące, opcja odrzucona) — wybrano samo X.
+
+## Etap 27: Genius — "avoid recently skipped tracks"
+
+*Źródło: user poprosił o dokończenie listy zaległych, wysokiego ROI usprawnień z Etapu 20d/23 — `SkipEventDao` zbierane od Etapu 3, ale nigdy nie czytane przy scoringu Instant Mix.*
+
+`SkipEventDao.getAll()` (nowy query, dotąd DAO miało tylko `insert`) czytane w `GeniusRepositoryImpl.generateInstantMix()`. Kara liczona od NAJNOWSZEGO skipu danego kandydata (nie liczby skipów — "niedawno" to pytanie o czas, nie o częstość), wygaszana wykładniczo w ~14 dni (`decayedSkipPenalty`, ten sam kształt matematyczny co `decayedCooccurrenceWeight`/`recencyBoost`, krótsza skala niż obie: świeży skip ma być realnie odczuwalny, ale nie wieczny). `GeniusScoring.score()` dostał nowy parametr `skipPenalty` — CELOWO odejmowany POZA budżetem ośmiu wag sumujących się do 1.00 (`WEIGHT_SKIP_PENALTY = 0.20f`), bo to nie kolejny pozytywny sygnał podobieństwa do zrównoważenia, tylko osobna korekta za jawny negatywny feedback usera.
+
+**Zweryfikowane:** `:domain:compileKotlin`/`:data:compileDebugKotlin` zielone. Zweryfikowane na żywo (czy realnie unika niedawno pominiętych w Instant Mix) czeka na telefon, jak reszta tej sesji.
+
+## Etap 28: Naprawa metadanych — MusicBrainz auto-apply (nie review) + okładki z Cover Art Archive
+
+*Źródło: kontynuacja Etapu 25. Propozycja "zaproponuj, nie nadpisuj" (patrz "Świadomie NIE" w Etapie 25) trafiła do realizacji, ale user słusznie zatrzymał ją w połowie: "jak będzie pobierać 5k utworów to co, będzie się o każdy pytać?" — recenzja sugestii jedna-po-jednej nie skaluje się do rozmiaru realnej biblioteki. Zamiast tego user poprosił o rozszerzenie na pobieranie okładek albumów.*
+
+### Decyzja: zostaje auto-apply, NIE review queue
+
+Etap 25 już auto-nadpisywał cicho — to zostaje bez zmian, plan "krok pośredni" z listy zaległości się nie zmaterializował i nie powinien: heurystyka (`TrackMetadataHeuristics.looksIncomplete`) jest już celowo konserwatywna (fałszywy negatyw tańszy niż fałszywy pozytyw), a UI proszące o potwierdzenie setek/tysięcy pojedynczych dopasowań byłoby gorsze niż sam problem, który miało rozwiązać.
+
+### Okładki — Cover Art Archive (coverartarchive.org), darmowe, bez klucza
+
+Nowy `CoverArtArchiveClient` (HEAD na `coverartarchive.org/release/{mbid}/front-250` — appka NIE ściąga bajtów obrazu, tylko sprawdza istnienie i zwraca URL; Coil, już użyty w `AsyncImage`, dociąga go leniwie przy renderze, dokładnie jak dziś robi to dla okładek z Google Drive). Wymaga MBID wydania z MusicBrainz — `MusicBrainzClient.parseBestRecording()` teraz też wyciąga `releases[0].id`, `MusicBrainzMatch` dostał pole `releaseMbid`.
+
+**Drugie, NIEZALEŻNE kryterium kandydowania — `TrackMetadataHeuristics.needsCoverArt()` (`albumArtUri == null`).** Kluczowa poprawka względem naiwnej wersji: utwór z DOBRYMI tagami, ale bez okładki, musi zapytać MusicBrainz o dopasowanie (żeby dostać MBID), ale **NIE WOLNO** mu przy okazji nadpisać poprawnego tytułu/wykonawcy kanonicznymi wartościami z MusicBrainz — `MetadataEnrichmentRepositoryImpl` liczy `hasBadTags = looksIncomplete(track)` OSOBNO i warunkuje nim zapis title/artist/album, niezależnie od tego czy `albumArtUri` się znalazło. `MusicBrainzClient.queryFor()` też się rozgałęzia: złe tagi → wolny tekst z nazwy pliku (jak w Etapie 25); dobre tagi (utwór tu tylko po okładkę) → precyzyjne zapytanie polowe `artist:"..." AND recording:"..."`, bo appka ma już wiarygodne dane wejściowe.
+
+`TrackMetadataOverrideEntity` dostała kolumnę `albumArtUri` (`aurora.db` v6→v7); `TrackRepositoryImpl.getAllTracks()` nakłada ją tak samo jak title/artist/album.
+
+**Zweryfikowane:** pełny build (`domain`/`data`/`app`, `--rerun-tasks`) zielony. Realne dopasowanie/pobranie okładki na żywym urządzeniu — jak reszta zaległej weryfikacji tej sesji.
+
+## Etap 29: Metadane audio na Track (codec/bitrate/sample rate/bit depth)
+
+*Źródło: kontynuacja listy z Etapu 20h — prerekwizyt blokujący przyszły Audio Lab, realizowany teraz jako samodzielny kawałek (bez samego ekranu Audio Lab, to wciąż osobna, większa runda).*
+
+**`MediaExtractor` (nie MediaStore — ten tych danych nie ma) — nowy `AudioMetadataExtractor` w `data`.** Otwiera pierwszy ścieżkę audio pliku, czyta `MediaFormat` (MIME→etykieta codeca, `KEY_SAMPLE_RATE`, `KEY_BIT_RATE`/1000, opcjonalny `bits-per-sample`). Świadomie NIE estymuje bit depth z rozmiaru pliku/czasu trwania, gdy ekstraktor go nie wystawia (częste dla skompresowanych formatów) — appka ma milczeć (`null`), nie zgadywać, ta sama zasada uczciwości co `AudioCapabilities`/`BitPerfectStatus` z Etapu 21.
+
+**Tylko `TrackSource.LOCAL`.** `MediaExtractor` czytałby zdalne `https://` (Drive/WebDAV) bez nagłówków autoryzacji, którymi dysponuje wyłącznie warstwa odtwarzania w `app` (`AuthenticatingHttpDataSourceFactory`) — świadomie odłożone, nie przeoczone, żeby nie mieszać dwóch różnych kontraktów dostępu do pliku w jednej rundzie. Dzięki temu cała funkcja mieści się w `data` (lokalny I/O, zero sieci) — inaczej niż Lyrics/MusicBrainz, które musiały wejść do `app` po OkHttp.
+
+**Warstwy:** `AudioTrackMetadata` (domain, cztery nullable pola) + `Track.audioMetadata` (nowe pole, domyślnie `null`) w `domain`; `TrackAudioMetadataEntity`/`Dao` (`aurora.db` v7→v8, ta sama zasada "zapisz też negatyw" co pozostały cache tej sesji) w `data`; `AudioMetadataExtractor`+`AudioMetadataRepositoryImpl` w `data/media` (bez potrzeby `app`, patrz wyżej); `TrackRepositoryImpl.getAllTracks()` nakłada cache tak samo jak metadane MusicBrainz. `LibraryViewModel.refresh()` odpala ekstrakcję jako trzecią, osobną korutynę w tle (obok Lyrics/MusicBrainz), tym samym wzorcem "podmień utwór na liście, gdy wynik wróci".
+
+**Zweryfikowane:** pełny build zielony. Rzeczywista poprawność odczytanych wartości na różnych formatach (MP3/FLAC/AAC/WAV) z prawdziwej biblioteki — czeka na telefon.
+
+### Świadomie NIE w tym etapie
+
+Sam ekran Audio Lab (wizualizacja tych danych) — DESIGN.md Etap 20h już to sekwencjonuje jako osobną, większą rundę (karta ŹRÓDŁO → łańcuch DSP → Wyjście/DAC na końcu). To tylko fundament danych, na którym ten ekran będzie mógł stanąć.
+
+## Etap 30: Logowanie Google Drive nie działa — diagnoza + decyzja biznesowa o publicznym wydaniu
+
+*Źródło: user zgłosił zrzutem ekranu, że logowanie Google nie przechodzi nawet z kontami widocznymi na telefonie. Zero kodu w tym etapie — to diagnoza + zapisana decyzja architektoniczna do wykonania w kolejnej rundzie.*
+
+### Diagnoza: `UNREGISTERED_ON_API_CONSOLE`
+
+Błąd `Błąd logowania Google (kod 8): [status=UNREGISTERED_ON_API_CONSOLE]` nie ma nic wspólnego z kontem na telefonie — `GoogleDriveLibraryRepository` (Google Identity Services, `Identity.getAuthorizationClient()`) nie trzyma w kodzie żadnego zaszytego client ID, tylko dopasowuje appkę po parze **package name (`com.aurora.player`) + SHA-1 podpisu APK** względem klienta OAuth zarejestrowanego w Google Cloud Console. User potwierdził: **dla tej appki nie istnieje jeszcze żaden projekt Google Cloud** — to nie regresja, tylko funkcja nigdy w pełni nie skonfigurowana od strony konsoli.
+
+**SHA-1 debug keystore (`~/.android/debug.keystore`, ten sam na tym komputerze dla wszystkich projektów budowanych lokalnie):**
+```
+AF:71:2B:00:BC:86:45:81:9C:EB:06:34:B1:C7:B2:FE:CA:81:60:34
+```
+
+Kroki do wykonania przez usera w Google Cloud Console (poza zasięgiem Claude Code — wymaga jego konta): nowy projekt → włącz Google Drive API → OAuth consent screen (External, dodać własny mail jako test user, dopóki projekt zostaje w "Testing") → Credentials → OAuth client ID → Android → package `com.aurora.player` + SHA-1 wyżej.
+
+### Decyzja: `drive.readonly` → `drive.file` + Picker, gdy appka ma wyjść poza test userów
+
+User zapytał, jak rozwiązać logowanie biznesowo, żeby "każdy mógł się zalogować" po publicznym wydaniu. Kluczowy fakt z klasyfikacji scope'ów Google: dzisiejszy `DriveScopes.DRIVE_READONLY` (pełny odczyt całego Dysku) to scope **restricted** — publiczne wydanie z tym scope'em wymaga pełnej weryfikacji Google ORAZ płatnego/czasochłonnego **CASA security assessment**, zanim userzy spoza listy testowej przestaną widzieć ostrzegawczy ekran "Google nie zweryfikował tej aplikacji".
+
+**Rekomendacja (nie zaimplementowane): przejście na `drive.file` + Google Picker.** User sam wybiera plik/folder z muzyką przez natywny Picker Google, appka widzi tylko to, co wskazał — `drive.file` to scope **niewrażliwy**, weryfikacja ogranicza się do formularza (link do polityki prywatności + strona appki), bez CASA i bez kosztów. Kompromis: appka przestaje sama skanować cały Dysk usera, wymaga jednorazowego wyboru folderu w Pickerze — mniejsza automatyczna wygoda, ale realnie osiągalne dla jednoosobowego/niszowego wydania. Wymaga realnej zmiany w `GoogleDriveLibraryRepository` (dodanie Google Picker UI, zmiana `AuthorizationRequest.setRequestedScopes`) — odłożone do kolejnej rundy, user ma jeszcze potwierdzić że to kierunek, w który chce iść, zanim appka w ogóle działa z Drive (Etap 30 diagnoza wyżej to twardy blocker sam w sobie).
+
+## Etap 31: Radio internetowe — Radio-Browser, geolokalizacja z ręcznym fallbackiem
+
+*Źródło: user, materiał porównawczy z Powerampem + jego luki ("implementacja radia ale z zastrzeżeniem że wyświetlamy stacje do wyboru popularne w kraju w którym użytkownik jest -> jeśli nie zgodzi się na geolokalizację to apka prosi o wybranie preferowanego kraju"). Świadomie pomijamy wszystko wymagające wbudowanego AI (user: "pomijamy wszystko co wymaga wbudowanego AI") — to prosta integracja API, nie rekomendacja.*
+
+### Co zbudowano
+
+**`RadioRepositoryImpl`** (`app/radio`) — Radio-Browser (radio-browser.info), otwarta baza ~40k stacji, **zero klucza API**. Stały, znany mirror (`de1.api.radio-browser.info`) zamiast round-robin przez DNS SRV (oficjalnie zalecane dla większej skali, wymagałoby dodatkowej biblioteki) — kompromis świadomy, wystarczający dla appki mobilnej.
+
+**Geolokalizacja z pełnym fallbackiem** — `RadioCountryResolver`: ostatnia znana lokalizacja (`LocationManager`) + `Geocoder` → kod kraju ISO. Zwraca `null` nie tylko przy odmowie zgody, ale też przy braku lokalizacji/niedziałającym Geocoderze (częste na niektórych ROM-ach) — `RadioScreen` w KAŻDYM z tych przypadków pokazuje `CountryPickerSheet` (pełna lista `Locale.getISOCountries()` z wyszukiwaniem), więc user zawsze kończy z jakąś listą stacji, nigdy z pustym ekranem.
+
+**Odtwarzanie** — `RadioStation.toTrack()`: stacja jako syntetyczny `Track` (`TrackSource.RADIO`, `durationMs = 0`), odtwarzany przez already-istniejący `PlayerRepository`/kolejkę/Now Playing — zero osobnej ścieżki odtwarzania. `AuthenticatingHttpDataSourceFactory` (Etap 12/22) już obsługuje dowolny host bez autoryzacji poprawnie (dopasowuje Bearer/Basic Auth tylko po znanym hoście Google Drive/WebDAV), więc strumienie radiowe zadziałały bez ŻADNEJ zmiany w `PlaybackService`.
+
+### Świadomie NIE w tym etapie
+
+Live ICY metadata (tytuł aktualnie granego utworu z nagłówka strumienia) — wymagałoby dodatkowego wsparcia w Media3 dla `Icy-MetaData: 1`, niezweryfikowanego bez realnego sprzętu; stacja pokazuje na razie statyczną nazwę. Ulubione stacje (osobna tabela Room) — czysty dodatek na później, nie blocker.
+
+### Zweryfikowane na żywo
+
+Pełny łańcuch na emulatorze: zgoda na lokalizację → `Geocoder` zwrócił `US` (domyślna lokalizacja emulatora) → realne stacje z API (Radio Paradise, WALM HD, 101 Smooth Jazz...) → tap → **faktyczne odtwarzanie strumienia** (`dumpsys media_session`: `state=PLAYING`, pozycja realnie postępuje, `metadata: Rockin' Around The Christmas Tree by Brenda Lee - Christmas Vinyl on walmradio.com`) → mini-player poprawnie pokazuje "Radio na żywo".
+
+## Etap 32: Podcasty — RSS + dwa niezależne katalogi wyszukiwania (iTunes + Podcast Index)
+
+*Źródło: user, ten sam materiał o Powerampie + dyskusja o modelu biznesowym wspólnego klucza API ("mam dać tylko jeden ten api i będzie na wszystkich użytkowników -> jak to rozwiązać biznesowo?" → decyzja: "zróbmy obie opcje żeby zawsze jakieś podcasty były, a tamten jako dodatek").*
+
+### Diagnoza: czemu NIE jeden wspólny klucz Podcast Index
+
+Limit zapytań Podcast Index jest per-klucz — jeden wspólny klucz appki dzieliłby budżet requestów między WSZYSTKICH userów appki naraz (przy realnej skali funkcja przestałaby działać dla wszystkich jednocześnie). Klucz zaszyty w APK jest też trywialny do wyciągnięcia dekompilacją, co zwykle łamie regulamin API rejestrowanych per-developer, nie per-anonimowy-user. Stąd dwutorowa architektura:
+
+1. **iTunes Search API** — publiczne, bez klucza, ZAWSZE działa. Domyślna, główna ścieżka wyszukiwania.
+2. **Podcast Index** — tylko gdy user poda WŁASNY, darmowy klucz (`PodcastIndexSetupDialog`, trwały w `PodcastIndexCredentialStore`, ten sam wzorzec co `WebDavCredentialStore`) — dodatek, nie wymóg. Auth: SHA-1(key+secret+unixTime) w nagłówkach `X-Auth-*`, zgodnie z dokumentacją API.
+
+### Co zbudowano
+
+**RSS parsing bez nowej zależności** — `PodcastRssParser` używa wbudowanego `javax.xml.parsers.DocumentBuilderFactory` (namespace-aware dla `itunes:`), ten sam wzorzec co PROPFIND w `WebDavLibraryRepository`. Obsługuje `itunes:duration` w obu formatach (sekundy albo `HH:MM:SS`) i `pubDate` przez `DateTimeFormatter.RFC_1123_DATE_TIME`.
+
+**Subskrypcje + pozycja odtwarzania w Room** — `PodcastSubscriptionEntity`, `PodcastPlaybackPositionEntity` (`AuroraDatabase` → wersja 9). Pozycja kluczowana po `trackId` (hash przez `TrackIdHasher`, ten sam identyfikator co Ulubione/Playlisty), NIE po surowym `guid` z RSS — appka nigdy nie musi odwracać hasha. Auto-zapis co ~5s odtwarzania (`LibraryViewModel` init, bucket po `positionMs / 5000` — nie na każdym ticku 300ms z `PlayerController`), auto-wznowienie przy ponownym odtworzeniu tego samego odcinka.
+
+**Odcinki NIE cache'owane** — świeże parsowanie RSS przy każdym wejściu w podcast (`fetchEpisodes`), świadomie, żeby uniknąć rozjazdu ze stanem kanału; cache jako możliwa optymalizacja na później, gdyby okazał się potrzebny.
+
+**Prędkość odtwarzania** — `PlayerRepository.setPlaybackSpeed`/`PlaybackState.playbackSpeed`, chipy 0.75×–2× widoczne w Now Playing TYLKO dla `TrackSource.PODCAST` (muzyka prawie nigdy tego nie potrzebuje, stały rząd chipów zaśmiecałby ekran odtwarzania muzyki).
+
+**Ekrany** — `PodcastsScreen` (subskrypcje + "Dodaj po URL"), `AddPodcastSheet` (RSS URL + wyszukiwanie w obu katalogach naraz, deduplikacja po `feedUrl`), `PodcastDetailScreen` (opis + lista odcinków).
+
+### Świadomie NIE w tym etapie
+
+Pomijanie ciszy, auto-cofanie po dłuższej pauzie, rozdziały — realne funkcje z materiału usera o Powerampie, ale osobny, dobrze wyodrębniony krok na później, nie blocker startowej wersji.
+
+### Zweryfikowane na żywo
+
+Pełny łańcuch: wyszukiwanie "Radiolab" przez iTunes → realne wyniki (Radiolab/WNYC Studios, Dolly Parton's America, Terrestrials...) → subskrypcja przez wklejony RSS URL (`feeds.wnyc.org/radiolab`) → **cały feed sparsowany poprawnie: 670 odcinków**, tytuły/daty (polska lokalizacja: "11 wrz 2026")/czasy trwania ("1h 3min") wszystkie poprawne → tap na odcinek → `dumpsys media_session` potwierdza `state=BUFFERING` (realny plik MP3 odcinka pobierany przez `PlayerRepository`/ExoPlayer, ten sam mechanizm co Radio).

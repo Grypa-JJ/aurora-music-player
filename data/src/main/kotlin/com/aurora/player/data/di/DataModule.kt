@@ -2,9 +2,11 @@ package com.aurora.player.data.di
 
 import com.aurora.player.data.genius.GeniusRepositoryImpl
 import com.aurora.player.data.genius.PlaybackHistoryRepositoryImpl
+import com.aurora.player.data.media.AudioMetadataRepositoryImpl
 import com.aurora.player.data.media.TrackRepositoryImpl
 import com.aurora.player.data.playlist.FavoritesRepositoryImpl
 import com.aurora.player.data.playlist.PlaylistRepositoryImpl
+import com.aurora.player.domain.repository.AudioMetadataRepository
 import com.aurora.player.domain.repository.FavoritesRepository
 import com.aurora.player.domain.repository.GeniusRepository
 import com.aurora.player.domain.repository.PlaybackHistoryRepository
@@ -32,4 +34,7 @@ abstract class DataModule {
 
     @Binds
     abstract fun bindFavoritesRepository(impl: FavoritesRepositoryImpl): FavoritesRepository
+
+    @Binds
+    abstract fun bindAudioMetadataRepository(impl: AudioMetadataRepositoryImpl): AudioMetadataRepository
 }

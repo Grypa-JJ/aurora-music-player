@@ -37,7 +37,9 @@ import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.PlaylistAdd
+import androidx.compose.material.icons.filled.Podcasts
 import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.AlertDialog
@@ -108,6 +110,8 @@ fun LibraryScreen(
     onOpenPlaylists: () -> Unit,
     onOpenAlbum: (name: String, artist: String) -> Unit,
     onOpenArtist: (String) -> Unit,
+    onOpenRadio: () -> Unit,
+    onOpenPodcasts: () -> Unit,
     modifier: Modifier = Modifier,
     sharedTransitionScope: SharedTransitionScope? = null,
     animatedVisibilityScope: AnimatedVisibilityScope? = null,
@@ -277,6 +281,22 @@ fun LibraryScreen(
                         title = "Genius",
                         subtitle = "Miksy dla Ciebie",
                         onClick = onOpenGeniusMixes,
+                    )
+                }
+                item {
+                    QuickAccessCard(
+                        icon = Icons.Filled.Radio,
+                        title = "Radio",
+                        subtitle = "Stacje na żywo",
+                        onClick = onOpenRadio,
+                    )
+                }
+                item {
+                    QuickAccessCard(
+                        icon = Icons.Filled.Podcasts,
+                        title = "Podcasty",
+                        subtitle = "Twoje subskrypcje",
+                        onClick = onOpenPodcasts,
                     )
                 }
             }

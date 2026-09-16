@@ -12,4 +12,7 @@ data class Track(
     val dateAddedMs: Long,
     val albumArtUri: String?,
     val source: TrackSource = TrackSource.LOCAL,
+    /** `null` dopóki [com.aurora.player.domain.repository.AudioMetadataRepository] jej nie
+     *  dociągnie w tle — DESIGN.md Etap 29. */
+    val audioMetadata: AudioTrackMetadata? = null,
 )

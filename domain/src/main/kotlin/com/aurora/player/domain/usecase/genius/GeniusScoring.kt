@@ -20,6 +20,11 @@ object GeniusScoring {
     private const val WEIGHT_CONTEXT = 0.05f
     private const val WEIGHT_RECENCY = 0.05f
 
+    // Powyższe wagi sumują się do 1.00 (pozytywne sygnały podobieństwa). Kara za niedawny skip
+    // (DESIGN.md Etap 27) jest CELOWO poza tym budżetem — to nie "jeszcze jeden pozytywny sygnał
+    // do zrównoważenia", tylko osobna, odejmowana korekta za jawny negatywny feedback usera.
+    private const val WEIGHT_SKIP_PENALTY = 0.20f
+
     /** Neutralny start dla utworów bez jeszcze zebranej historii odtworzeń. */
     const val DEFAULT_AFFINITY = 0.3f
 
@@ -30,6 +35,7 @@ object GeniusScoring {
         cooccurrenceScore: Float,
         contextScore: Float,
         nowMs: Long,
+        skipPenalty: Float = 0f,
     ): Float =
         WEIGHT_GENRE * genreMatch(seed.genre, candidate.genre) +
             WEIGHT_ARTIST * artistMatch(seed.artist, candidate.artist) +
@@ -38,7 +44,8 @@ object GeniusScoring {
             WEIGHT_COOCCURRENCE * cooccurrenceScore.coerceIn(0f, 1f) +
             WEIGHT_AFFINITY * affinityScore.coerceIn(0f, 1f) +
             WEIGHT_CONTEXT * contextScore.coerceIn(0f, 1f) +
-            WEIGHT_RECENCY * recencyBoost(candidate.dateAddedMs, nowMs)
+            WEIGHT_RECENCY * recencyBoost(candidate.dateAddedMs, nowMs) -
+            WEIGHT_SKIP_PENALTY * skipPenalty.coerceIn(0f, 1f)
 
     private fun genreMatch(a: String?, b: String?): Float {
         if (a.isNullOrBlank() || b.isNullOrBlank()) return 0f
