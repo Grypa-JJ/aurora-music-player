@@ -7,6 +7,9 @@ import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -54,6 +57,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextOverflow
@@ -114,11 +118,22 @@ fun NowPlayingScreen(
         animationSpec = tween(400),
         label = "nowPlayingAccent",
     )
-    val backgroundBrush = Brush.verticalGradient(listOf(backgroundTop, Color(0xFF06060A)))
+    val visualizerFrame by viewModel.visualizerFrame.collectAsState()
+    // Zgłoszenie: "tło aplikacji reaguje na dźwięki i pulsuje w rytmie muzyki" — ten sam sygnał
+    // basu co już napędza AmbientGlow za okładką, tu tylko delikatnie "oddycha" kolorem górnej
+    // części gradientu w stronę koloru akcentu zamiast robić cokolwiek geometrycznie (skala/blur
+    // całego ekranu przesuwałaby też tekst/przyciski, nie tylko tło — niepożądane). Spring, nie
+    // tween: ten sam wzorzec wygładzania co AmbientGlow, żeby uderzenia basu nie migotały.
+    val bassPulse by animateFloatAsState(
+        targetValue = visualizerFrame.bassEnergy.coerceIn(0f, 1f),
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        label = "nowPlayingBackgroundBassPulse",
+    )
+    val pulsedBackgroundTop = lerp(backgroundTop, accentColor, fraction = 0.22f * bassPulse)
+    val backgroundBrush = Brush.verticalGradient(listOf(pulsedBackgroundTop, Color(0xFF06060A)))
     var showEqSheet by remember { mutableStateOf(false) }
     var visualizerMode by remember { mutableStateOf(VisualizerMode.AlbumArt) }
     val hazeState = rememberHazeState()
-    val visualizerFrame by viewModel.visualizerFrame.collectAsState()
 
     // GLES 3.1 to twardy wymóg projectM (patrz DESIGN.md Etap 9) — na słabszych/starszych
     // urządzeniach (minSdk appki to 26, nie wszystkie mają GLES 3.1) appka po cichu spada na
@@ -129,10 +144,10 @@ fun NowPlayingScreen(
     // i nakładka pełnoekranowa to dwie OSOBNE instancje silnika (patrz komentarz w ProjectMSurface)
     // i muszą dzielić dokładnie tę samą kategorię/preset, żeby przejście między nimi nie
     // "przeskakiwało" na inną wizualizację — to była zgłoszona regresja z Etapu 10.
-    val defaultVisualizerMode = remember(track?.genre) {
-        ProjectMVisualizerMode.defaultForGenre(track?.genre)
-    }
-    var projectMMode by remember(track?.genre) { mutableStateOf(defaultVisualizerMode) }
+    // Etap 20/21, zgłoszenie: domyślny tryb to zawsze ALL (patrz komentarz w
+    // ProjectMVisualizerMode) — dawne dopasowanie do gatunku zawężało pulę losowania i zwiększało
+    // szansę trafienia w ten sam, źle skurowany preset.
+    var projectMMode by remember(track?.genre) { mutableStateOf(ProjectMVisualizerMode.ALL) }
     var currentPresetPath by remember { mutableStateOf<String?>(null) }
     var visualizerSettings by remember(track?.genre) {
         mutableStateOf(

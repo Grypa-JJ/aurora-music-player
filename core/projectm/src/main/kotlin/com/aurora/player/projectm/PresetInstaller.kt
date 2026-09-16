@@ -16,7 +16,12 @@ object PresetInstaller {
 
     // Zwiększ przy każdej zmianie zawartości core/projectm/src/main/assets/projectm_presets/,
     // żeby wymusić re-ekstrakcję na urządzeniach z już zainstalowaną starszą wersją.
-    private const val CURRENT_VERSION = 1
+    // v2 (Etap 19/20): usunięto 8 presetów "TonyMilkdrop" z Hypnotic — zweryfikowane na żywo
+    // (wielokrotnie, na różnych utworach/trybach), że renderują to samo agresywne logo "M" ze
+    // słuchawkami zamiast spokojnej, ambientowej treści; zgłoszenie: "presety nie są przypisane
+    // odpowiednio do danej kategorii". Patrz DESIGN.md Etap 20 — to częściowa, potwierdzona
+    // poprawka, nie pełna rekuracja całej paczki (581 presetów).
+    private const val CURRENT_VERSION = 2
 
     /** Zwraca ścieżkę katalogu z gotowymi do użycia plikami `.milk` na dysku. */
     fun ensureInstalled(context: Context): File {

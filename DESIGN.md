@@ -718,3 +718,113 @@ Spec to spójna, dopracowana wizja "premium hi-fi" — i dobra wiadomość jest 
 # albo od razu na podłączone urządzenie/emulator:
 ./gradlew.bat :app:installDebug
 ```
+
+## Etap 21: Architektura wyjścia audio — przygotowanie pod DAC
+
+*Źródło: propozycja usera (interfejs `AudioOutput` jako przygotowanie appki pod zewnętrzne DAC-i/USB/BLE/własny przyszły sprzęt "Aurelis") skonfrontowana z 3 równoległymi analizami: (1) rzeczywisty kod pipeline'u audio Media3, (2) research możliwości Android SDK dot. USB DAC/routingu/bit-perfect, (3) wpływ na już zaplanowany Etap 20 i precedens architektoniczny w tym projekcie. Status: **decyzja architektoniczna — kod poniżej jeszcze NIE jest napisany**, patrz "Status" na końcu sekcji.*
+
+### Propozycja i werdykt
+
+User zaproponował interfejs `AudioOutput` (`capabilities`/`connect`/`disconnect`/`setVolume`/`setSampleRate`/`setGain`/`setFilter`) z implementacjami `LocalOutput`/`UsbAudioOutput`/`BluetoothOutput`/`ExternalDeviceOutput` (docelowo `AurelisDacOutput`), żeby appka nie musiała przepisywać playera, gdy pojawi się realny sprzęt.
+
+**Werdykt: sam interfejs — tak, teraz. Konkretne protokoły dla nieistniejącego sprzętu — nie.** Uzasadnienie z realnego kodu, nie teorii:
+
+- `PlayerRepository`/`PlayerController` dziś **nie mają żadnej metody volume/routing** (`PlayerRepository.kt:7-16` eksponuje wyłącznie transport: `playQueue/togglePlayPause/seekTo/skipToNext/skipToPrevious`; grep `Volume|volume` po całym `app/src/main/kotlin` — 0 wyników). Dodanie `AudioOutput` **nie wymaga przepisywania niczego istniejącego** — nie ma z czego "odklejać" volume/routing, bo nigdy tam nie było. To dokładnie sytuacja, w której tania abstrakcja jest faktycznie tania, nie tylko z nazwy.
+- Android SDK realnie coś tu daje za darmo, samym publicznym API, zero własnego sprzętu: `AudioManager.getDevices()` + `AudioDeviceCallback` (detekcja podłączenia/odłączenia USB DAC, API 23+, bez dotykania `UsbManager`) i `ExoPlayer.setPreferredAudioDevice()` (Media3 miało to już w 1.1.1, repo ma `media3 = "1.5.0"` — `gradle/libs.versions.toml:9` — więc dostępne bez podnoszenia wersji). `LocalAudioOutput` i w przyszłości `UsbAudioOutput` mają więc realną treść do włożenia, to nie są z góry puste zaślepki.
+- Rozstrzygające ograniczenie: `setGain`/`setFilter`/`setSampleRate` jako coś więcej niż deklarowany brak wsparcia nie mają dziś czystej ścieżki w publicznym SDK. Sterowanie analogowym gainem/filtrem cyfrowym DAC-a (feature-unit USB Audio Class) jest zamknięte wewnątrz audio policy/HAL — appka nie ma jak wysłać takiego żądania bez własnego kanału HID/vendor-specific na przyszłym sprzęcie. Realny `setSampleRate` koliduje z tym, że do Android 13 włącznie **nie istnieje** systemowy tryb exclusive/bit-perfect — `AudioFlinger` miksuje i resampluje wszystko bez pytania appki i bez informowania jej, co realnie dotarło do DAC-a. Jedyny wyjątek to `AudioManager.setPreferredMixerAttributes(MIXER_BEHAVIOR_BIT_PERFECT)` od **Android 14, wyłącznie USB**, z niepewnym wsparciem producentów telefonów. To dokładnie pokrywa się z ostrzeżeniem już zapisanym w `premium_hifi_player_ui_master_spec.svg` i zacytowanym w Etapie 20 (pytanie 5, linia 707) — appka nie powinna niczego tu obiecywać na sztywno.
+- Pisanie realnych `UsbAudioOutput`/`BluetoothOutput`/`ExternalDeviceOutput`/`AurelisDacOutput` (protokół BLE, HID, OTA firmware) **teraz** oznacza kod, którego nie da się zweryfikować na żywo — sprzeczne z zasadą, na której stoi reszta tego dziennika (Etap 14/16/19 — każda zmiana potwierdzona na emulatorze/telefonie, nigdy samą kompilacją). Sprzeczne też ze STYLEM tego projektu: dokładnie ta sama sytuacja (interfejs na wiele przyszłych implementacji, dziś realna jedna) już się zdarzyła przy `MusicSource`/multi-cloud i projekt **dwukrotnie świadomie odłożył** pełną abstrakcję do momentu, gdy druga implementacja jest naprawdę blisko (Etap 13, linia 576; Etap 20h, linia 694) zamiast budować ją "na zapas". `AudioOutput` z trzema implementacjami-widmami dla urządzeń spoza najbliższej kolejki powtórzyłby błąd, którego ten projekt już się nauczył unikać.
+
+### Projekt interfejsu (co robimy teraz)
+
+**Miejsce — bez nowego modułu Gradle.** Repo ma dziś 5 modułów (`app`, `core:designsystem`, `core:projectm`, `domain`, `data` — `settings.gradle.kts`); `core:designsystem`/`core:projectm` istnieją tylko dlatego, że owijają realną, sporą technologię (współdzielony design system, natywny projectM). Ani jedno z 6 istniejących repozytoriów (`PlayerRepository`, `EqRepository`, `CloudLibraryRepository`, `TrackRepository`, `GeniusRepository`, `PlaybackHistoryRepository`) nie dostało własnego modułu — interfejs zawsze w `domain`, jedyna implementacja zawsze w `app`, bindowanie przez Hilt `@Module` w `app/.../di/`. Nowy `core:audiooutput` dla jednej implementacji byłby dziś przedwczesną ceremonią infrastrukturalną.
+
+- **Interfejs** — nowy plik `domain/src/main/kotlin/com/aurora/player/domain/audio/AudioOutput.kt` (nowy pakiet `audio/`, osobny od `repository/`: to sterowanie urządzeniem z `connect()/disconnect()`, nie repozytorium danych — żadne z 6 istniejących repo nie ma tej semantyki, więc odejście od sufiksu `*Repository` jest tu świadome, nie przeoczenie; warto to zaznaczyć w KDoc pliku, tak jak `CloudLibraryRepository.kt:7-9` już tłumaczy swoje własne odstępstwo od normy modułu).
+- **`domain` zostaje czystym Kotlinem** — ten sam wymóg, który `CloudLibraryRepository.kt:7-9` dokumentuje dla `signIn()` — więc `AudioCapabilities`/`Gain`/`DacFilter` to zwykłe klasy Kotlin, zero `android.media.AudioDeviceInfo` w sygnaturze interfejsu:
+
+  ```kotlin
+  package com.aurora.player.domain.audio
+
+  /** Zdolności JEDNEGO wyjścia audio. Domyślnie same "nie" — świadomy model
+   *  realnych ograniczeń platformy (patrz DESIGN.md Etap 21), nie skrót do
+   *  wypełnienia później. Audio Lab (Etap 20h) ma czytać ten model wprost
+   *  zamiast wymyślać własny status DAC-a. */
+  data class AudioCapabilities(
+      val deviceName: String? = null,
+      val supportsVolumeControl: Boolean = false,
+      val supportsSampleRateControl: Boolean = false,
+      val supportsGainControl: Boolean = false,
+      val supportsFilterControl: Boolean = false,
+      val bitPerfectStatus: BitPerfectStatus = BitPerfectStatus.UNKNOWN,
+  )
+
+  enum class BitPerfectStatus { UNKNOWN, LIKELY_RESAMPLED, GUARANTEED_BY_SYSTEM }
+
+  enum class DacFilter { UNSUPPORTED } // realne warianty dopiero z pierwszym urządzeniem, które je definiuje
+  data class Gain(val value: Float)     // jednostka/zakres nieznane bez realnego DAC-a
+
+  interface AudioOutput {
+      val capabilities: AudioCapabilities
+      suspend fun connect(): Boolean
+      suspend fun disconnect()
+      suspend fun setVolume(value: Float)
+      suspend fun setSampleRate(sampleRate: Int): Boolean  // false = zignorowane, nigdy cicha nieprawda
+      suspend fun setGain(gain: Gain): Boolean
+      suspend fun setFilter(filter: DacFilter): Boolean
+  }
+  ```
+
+  Różnica względem propozycji usera: operacje, których platforma nie gwarantuje (`setSampleRate`/`setGain`/`setFilter`), zwracają `Boolean` zamiast `Unit` — żeby `AudioOutput` fizycznie nie mogło udawać sukcesu, którego nie ma. To ostrzeżenie usera o "bit-perfect" zastosowane konsekwentnie do całego interfejsu, nie tylko do jednego pola.
+
+- **Implementacja** — `LocalAudioOutput` w `app/src/main/kotlin/com/aurora/player/playback/LocalAudioOutput.kt`, obok `PlayerController.kt` (nie jako metoda w samym `PlayerController` — to osobny komponent, nie część transportu). Owija to, co appka i tak robi dziś milcząco: `connect()` zawsze `true` (domyślne wyjście systemowe jest zawsze "podłączone"), `setVolume()` przez `AudioManager`/`STREAM_MUSIC` (nie wymaga referencji do `ExoPlayer` — głośność systemowa jest niezależna od instancji playera), reszta `capabilities` = `false`/`UNKNOWN`.
+- **DI** — nowy `app/src/main/kotlin/com/aurora/player/di/AudioOutputModule.kt`, dokładnie wzorzec `EqModule.kt`/`CloudModule.kt`: `@Binds abstract fun bindAudioOutput(impl: LocalAudioOutput): AudioOutput`.
+- **Podłączenie do pipeline'u — `PlaybackService`, NIE `PlayerController`.** `PlayerController` (`app/.../playback/PlayerController.kt:40-69`) nie trzyma `ExoPlayera` — tylko `MediaController` połączony z `PlaybackService` przez `SessionToken`. Realny silnik audio (ExoPlayer/AudioSink) żyje w `PlaybackService.onCreate()` (`app/.../playback/PlaybackService.kt:43-72`), które już dziś wstrzykuje `eqRepository`/`visualizerAnalyzer`/`cloudLibraryRepository` tym samym wzorcem `@Inject lateinit var`. `audioOutput: AudioOutput` dołącza do tej samej listy — zero nowej infrastruktury.
+- **DSP-owa część łańcucha** (żeby diagram Plik→DSP→System→DAC miał gdzie rosnąć) — `EqualizerRenderersFactory.buildAudioSink()` (`app/.../eq/EqualizerRenderersFactory.kt:23-27`) ma dziś sztywne `setAudioProcessors(arrayOf(equalizerAudioProcessor))`, jednoelementową tablicę. Zmiana konstruktora na `audioProcessors: List<AudioProcessor>` + `.setAudioProcessors(audioProcessors.toTypedArray())` to trywialny, zero-ryzykowny refaktor, który otwiera węzeł DSP na kolejne procesory (np. przyszły ReplayGain z Etapu 20h) — Media3 już to obsługuje, `EqualizerAudioProcessor` to dowodzi.
+
+### Wpływ na Etap 20 (Audio Lab)
+
+Etap 20h już poprawnie sekwencjonuje kartę "Wyjście/DAC/bit-perfect" na sam koniec Audio Lab i już cytuje właściwe ostrzeżenie speca — ta kolejność się nie zmienia. Dwie rzeczy do doprecyzowania w świetle tej decyzji:
+
+1. **Karta DAC w Audio Lab powinna czytać `AudioOutput.capabilities`, nie wymyślać własny status od zera.** Budując interfejs teraz (nawet z jedną, lokalną implementacją), Audio Lab z Etapu 20h dostaje gotowy, uczciwy kontrakt danych (`AudioCapabilities.bitPerfectStatus`) zamiast musieć go zaprojektować w momencie, gdy plan w końcu dojdzie do tego punktu.
+2. **Pytanie 5 z Etapu 20 (linia 707: "czy zaczynać bez realnego DAC-a do testu na żywo") dostaje tu częściową odpowiedź, nie pełną**: tak dla samego interfejsu + `LocalAudioOutput` (nie wymaga żadnego DAC-a — to model dzisiejszego, milczącego zachowania systemu). Nadal nie dla realnego `UsbAudioOutput`/routingu — to czeka na fizyczne urządzenie (choćby najtańszy generyczny dongle USB-C), zgodnie z pierwotną intencją tego pytania.
+3. `BitPerfectStatus.GUARANTEED_BY_SYSTEM` może w tym projekcie nigdy nie zostać osiągnięty, jeśli user odpowie "nie" na pytanie niżej — Audio Lab pokazywałby wtedy wyłącznie `UNKNOWN`/`LIKELY_RESAMPLED`, nigdy zielony checkmark. To w pełni poprawny, uczciwy stan końcowy, nie brakująca funkcja.
+
+### Świadomie NIE teraz
+
+- **`UsbAudioOutput`/`BluetoothOutput`/`ExternalDeviceOutput` jako realne implementacje** — nawet ta część, którą samo SDK by pozwoliło zrobić (detekcja + wybór urządzenia przez `AudioManager`/`ExoPlayer.setPreferredAudioDevice`) jest technicznie gotowa do napisania, ale **niemożliwa do zweryfikowania na żywo bez fizycznego USB DAC-a podłączonego do telefonu**. To nie jest "protokół dla nieistniejącego urządzenia" w tym samym sensie co Aurelis (generyczny DAC USB Audio Class to sprzęt z półki, nie coś do zaprojektowania) — ale dopóki nie ma choćby najtańszego dongla do testu, kod zostaje niezweryfikowany, więc zgodnie z zasadą tego projektu ("zweryfikowane na żywo", nie samą kompilacją) nie wchodzi teraz.
+- **`setGain`/`setFilter` jako coś więcej niż `false`** — feature-unit USB Audio Class (analogowy gain, przełącznik filtra cyfrowego chipu DAC) nie ma czystej ścieżki w publicznym Android SDK; jedyna droga to osobny kanał HID/vendor-specific na przyszłym własnym sprzęcie (Aurelis) albo BLE GATT — oba wymagają specyfikacji urządzenia, której dziś nie ma.
+- **`setSampleRate` jako realnie działająca funkcja** — do Android 13 nie istnieje systemowy tryb bit-perfect/exclusive; jedyny wyjątek (`setPreferredMixerAttributes`, Android 14+, tylko USB) jest warunkowy i niepewny co do wsparcia producentów telefonów — do zaimplementowania dopiero razem z realnym testem na konkretnym telefonie+DAC-u.
+- **Cały przyszły własny sprzęt (`AurelisDacOutput`)**: protokół komunikacji (BLE GATT custom service albo HID/vendor-specific USB), OTA firmware (BLE/USB DFU), panel sterowania AMP-em — czysta koncepcja/dokumentacja, zero kodu. Nie ma urządzenia, nie ma firmware'u, nie ma specyfikacji do zweryfikowania — pisanie tego kodu teraz byłoby zgadywaniem kontraktu, który i tak trzeba będzie przeprojektować, gdy powstanie pierwszy prototyp.
+
+### Pytanie do usera
+
+Research (raport 2) pokazuje, że nawet w najlepszym możliwym scenariuszu (Android 14+, wyjście USB, wsparcie producenta telefonu) "bit-perfect" byłby warunkowym, rzadkim stanem — a przy `minSdk 26` (sekcja 1.3) zdecydowana większość userów nigdy nie zobaczy ścieżki, która to gwarantuje. Czy Audio Lab ma w ogóle KIEDYKOLWIEK próbować wykrywać/deklarować "bit-perfect: TAK" (warunkowo, tylko gdy system to faktycznie gwarantuje przez `setPreferredMixerAttributes`), czy appka ma świadomie nigdy nie pokazywać zielonego stanu bit-perfect i ograniczyć się wyłącznie do przezroczystego "system może miksować/resamplować" niezależnie od wersji Androida — innymi słowy: czy `BitPerfectStatus.GUARANTEED_BY_SYSTEM` w ogóle powinien istnieć jako osiągalna wartość w tym kodzie?
+
+### Status
+
+Ten wpis to **decyzja architektoniczna i projekt kodu, nie zaimplementowany stan** — żaden z plików wymienionych wyżej (`AudioOutput.kt`, `LocalAudioOutput.kt`, `AudioOutputModule.kt`, zmiana `EqualizerRenderersFactory`/`PlaybackService`) nie istnieje jeszcze w repo w momencie pisania tego wpisu. Do zrobienia w kolejnej rundzie: napisać te pliki, skompilować `:domain`/`:app`, i zweryfikować na żywo, że głośność nadal działa identycznie jak dziś — żeby wstawienie `LocalAudioOutput` między `AudioManager` a resztą appki nie było regresem cichej, dziś działającej funkcji.
+
+## Etap 22: Podstawowe funkcje odtwarzacza zapisane w wizji, nigdy nie zbudowane — kolejka, timer snu, ulubione, playlisty
+
+*Źródło: pytanie usera "co ma Spotify/inne appki, czego brakuje u nas" — porównanie z sekcją 3.1/3.2 tego dokumentu (pierwotna wizja appki, sesja 1) i z faktycznym stanem kodu.*
+
+### Diagnoza
+
+Cztery funkcje były zapisane w projekcie UI appki OD PIERWSZEJ SESJI: sekcja 3.1 (linia 141) — taby "Utwory/Albumy/Wykonawcy/**Playlisty**"; sekcja 3.2 (linia 161) — menu "..." z "**timer snu**"; (linia 166) — "**kolejka odtwarzania**" jako ikona dolnego paska Now Playing; (linia 131/163) — przycisk serca/**ulubione**. Żadna z nich nigdy nie została zaimplementowana. Co ważniejsze: Etap 20 (analiza luk względem `premium_hifi_player_ui_master_spec.svg`) był skoncentrowany na TYM nowym dokumencie, nie porównywał się z oryginalną wizją z sekcji 3 — więc te rzeczy wypadły z aktywnego trackingu, mimo że leżą zapisane w tym samym pliku od początku. Playlisty jedyne z nich trafiły z powrotem do planu (Etap 20h, jako "duży odłożony kawałek"), pozostałe trzy nie miały żadnego wpisu w Etapie 20 w ogóle.
+
+Potwierdzone w kodzie (grep `NowPlayingScreen.kt` na `Queue|Kolejka|Favorite|Ulubion|Timer`): zero wystąpień — żadna z tych funkcji nie istnieje dziś, nie tylko brakuje jej dopracowania.
+
+### Co dokładnie brakuje
+
+1. **Ekran kolejki** — silnik JUŻ DZIAŁA (`PlayerController.playQueue`, `skipToNext/Previous` przez `MediaController.seekToNext/PreviousMediaItem` — patrz Etap 3), brakuje wyłącznie UI: lista "co dalej", reorder (drag), "usuń z kolejki", "dodaj następny" vs "dodaj na koniec" z menu utworu. Najtańsza z czterech — dane już płyną przez `PlaybackState`, to czysty widok nad gotowym stanem.
+2. **Timer snu** — zatrzymanie odtwarzania po N minutach (albo "po końcu utworu"). Zero istniejącego kodu. Prosty do zrobienia: coroutine `delay` + `playerRepository.togglePlayPause()`, stan w `PlayerController` albo małym osobnym repo. UI: opcja w menu "..." Now Playing (5/15/30/60 min, "koniec utworu").
+3. **Ulubione (serce)** — wymaga nowej tabeli Room (`FavoriteEntity(trackId, addedAt)`), DAO, use case, ikona serca w Now Playing + liście utworów. Naturalnie zasila też Genius jako dodatkowy, jawny sygnał (silniejszy niż samo dosłuchanie, które już liczy `TrackAffinity`).
+4. **Playlisty** — już w planie jako Etap 20h, bez zmian tutaj (nowa encja, największy koszt z czwórki, bo to nowy koncept domenowy, nie nakładka na istniejący `Track`).
+5. **Menu "..." per utwór** — hub łączący punkty 1/3/4 (dodaj do kolejki, dodaj do playlisty, ulubione, idź do albumu, informacje o pliku) — jeden reużywalny komponent (lista biblioteki, Now Playing, przyszły ekran Albumu z Etapu 20c).
+
+### Rekomendowana kolejność
+
+Kolejka i Timer snu **przed** Playlistami/Ulubionymi — nie wymagają nowego schematu Room (kolejka już istnieje w pamięci, timer to czysta logika czasowa), więc to dopisanie UI nad gotowym fundamentem, zero ryzyka migracji. Ulubione i Playlisty razem (ta sama kategoria: nowe tabele + DAO), po Etapie 20b (nawigacja), skoro obie docelowo chcą własnych zakładek.
+
+### Świadomie NIE w planie
+
+Sync między urządzeniami, Chromecast, podcasty, publiczne udostępnianie — wymagałyby konta/backendu, którego appka celowo nie ma (ta sama zasada "100% lokalnie" co przy silniku Genius). Jeśli to się kiedyś zmieni, to osobna, świadoma decyzja produktowa usera, nie naturalne rozszerzenie tego planu.

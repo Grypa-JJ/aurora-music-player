@@ -10,4 +10,6 @@ data class PlaybackState(
      * musi czekać, aż player sam ją odkryje po rozpoczęciu buforowania.
      */
     val durationMs: Long = 0L,
+    /** Aktualna kolejka odtwarzania, w kolejności — patrz DESIGN.md Etap 22 (ekran Kolejka). */
+    val queue: List<Track> = emptyList(),
 )

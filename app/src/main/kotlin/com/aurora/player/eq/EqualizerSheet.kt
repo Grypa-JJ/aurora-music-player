@@ -61,7 +61,31 @@ fun EqualizerSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = if (hazeState != null) Color.Transparent else surfaceColor,
+        // Zgłoszenie ze zrzutem ekranu: górne rogi sheeta wyglądały jak KOPUŁA, nie łagodne
+        // zaokrąglenie — przyczyna: bez jawnego `shape`, ModalBottomSheet domyślnie bierze
+        // `MaterialTheme.shapes.extraLarge`, a w AuroraShapes ten token to 999.dp (celowo, do
+        // PIGUŁEK/przycisków — patrz Shape.kt) — przy szerokości sheeta dwa łuki 999dp po prostu
+        // się zlewają w jedną półkolistą kopułę zamiast dwóch osobnych, subtelnych rogów. Jawny,
+        // rozsądny promień tylko dla górnych rogów (ten sam co karty w reszcie appki) naprawia to
+        // bez ruszania globalnego tokenu (który gdzie indziej jest poprawny dla pigułek).
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        // Etap 19 poprzednio dawał tu pełną Transparent + poleganie WYŁĄCZNIE na hazeEffect —
+        // ale hazeEffect kryje tylko obszar POD samym paskiem uchwytu (drag handle), który
+        // Material3 rysuje jako WŁASNY element sheeta nad tą treścią. Efekt: uchwyt miał za
+        // słabe krycie i tło Now Playing prześwitywało dokładnie na styku z tytułem "Equalizer"
+        // (zgłoszenie ze zrzutem ekranu). `containerColor` obejmuje CAŁY sheet (uchwyt + treść),
+        // więc dając mu tu prawie pełną nieprzezroczystość zamiast zera, spójnie kryjemy wszystko
+        // w jednym miejscu — hazeEffect zostaje na wierzchu jako sama faktura rozmycia, nie jedyna
+        // warstwa krycia.
+        containerColor = if (hazeState != null) surfaceColor.copy(alpha = 0.94f) else surfaceColor,
+        // Zgłoszenie na żywo: nad sheetem widać pasek OSTREJ, nierozmytej okładki (np. napis
+        // "GREATEST HITS" czytelny wprost) między poświatą Now Playing a samym sheetem —
+        // `hazeEffect` rozmywa tylko WEWNĄTRZ sheeta, nie domyślny scrim Material3 (to zwykłe,
+        // płaskie przyciemnienie malowane przez sam ModalBottomSheet, poza naszym Modifierem).
+        // Nie da się podłączyć tam prawdziwego blura publicznym API — zamiast tego, ciemniejszy
+        // scrim wystarczająco przyciemnia okładkę, żeby przejście do rozmytego sheeta nie rzucało
+        // się w oczy jako "dziura" w efekcie.
+        scrimColor = Color.Black.copy(alpha = 0.75f),
         modifier = if (hazeState != null) {
             Modifier.hazeEffect(state = hazeState, style = HazeMaterials.regular(surfaceColor))
         } else {
@@ -71,12 +95,12 @@ fun EqualizerSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                // Zgłoszenie: panel equalizera nieczytelny nad wizualizerem pełnoekranowym —
-                // sam `hazeEffect`/`HazeMaterials.regular` daje za mało krycia nad jasną, ostrą
-                // grafiką (Milkdrop), przez co tekst/suwaki zlewają się z tłem. Blur z hazeEffect
-                // wciąż widoczny na krawędziach sheeta, ale treść ma teraz gwarantowane, prawie
-                // pełne krycie niezależnie od tego, co akurat renderuje się pod spodem.
-                .background(surfaceColor.copy(alpha = 0.94f))
+                // Etap 19 wcześniej wymuszał tu fillMaxHeight(0.72f), próbując naprawić prześwit
+                // nad sheetem — ale to leczyło objaw (słabe krycie uchwytu, już naprawione wyżej
+                // przez containerColor), nie przyczynę, i przy okazji rozciągało sheet na sztywno
+                // dużo powyżej realnej wysokości treści (10 suwaków + zakładki + Reset), zostawiając
+                // pustą czarną przestrzeń pod "Reset" (kolejne zgłoszenie ze zrzutem). Naturalny
+                // wrapContentHeight (domyślne zachowanie ModalBottomSheet) jest tu poprawny.
                 .padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s),
         ) {
             Row(
@@ -127,8 +151,11 @@ fun EqualizerSheet(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = tokens.spacing.l)
-                    .height(180.dp),
+                    .padding(top = tokens.spacing.xl)
+                    // Etap 19/20: powiększone z 180dp — bardziej namacalne, "premium" suwaki
+                    // (zgodne z kierunkiem hi-fi z DESIGN.md), przy okazji naturalnie wypełniają
+                    // więcej wysokości sheeta bez pustej, martwej przestrzeni.
+                    .height(260.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 eqState.bands.forEachIndexed { index, band ->

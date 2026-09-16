@@ -5,11 +5,17 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -33,11 +39,21 @@ fun VisualizerSettingsPanel(
     settings: ProjectMVisualizerSettings,
     onSettingsChange: (ProjectMVisualizerSettings) -> Unit,
     modifier: Modifier = Modifier,
+    // Etap 19/20 — null gdy nie ma jeszcze bieżącego presetu do zablokowania (np. lista pusta);
+    // patrz [PresetBlocklistStore] i wywołanie w ProjectMSurface.
+    onBlockCurrentPreset: (() -> Unit)? = null,
 ) {
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(20.dp))
             .background(Color.Black.copy(alpha = 0.75f))
+            // Zgłoszenie na żywo: w małej ramce inline (kwadrat wielkości okładki) panel miał
+            // WIĘCEJ kontrolek niż mieściło się w wysokości — zwykły Column bez przewijania po
+            // prostu UCINAŁ dół (zniknęło "Kolor poświaty" i przycisk blokady presetu) zamiast
+            // pokazać komunikat o błędzie, więc łatwo było to przeoczyć. `verticalScroll` czyni
+            // to niewrażliwe na przyszłość — kolejna dołożona kontrolka (np. FPS z Etapu 18)
+            // przewinie się zamiast znowu ucinać dół w małym kontenerze.
+            .verticalScroll(rememberScrollState())
             .padding(20.dp),
     ) {
         Text(
@@ -126,6 +142,31 @@ fun VisualizerSettingsPanel(
                         .padding(horizontal = 14.dp, vertical = 8.dp),
                 )
                 Spacer(modifier = Modifier.width(8.dp))
+            }
+        }
+
+        if (onBlockCurrentPreset != null) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = 48.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .clickable(onClick = onBlockCurrentPreset)
+                    .padding(horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.VisibilityOff,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.85f),
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = "Nie pokazuj więcej tego wyglądu",
+                    color = Color.White.copy(alpha = 0.85f),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
             }
         }
     }

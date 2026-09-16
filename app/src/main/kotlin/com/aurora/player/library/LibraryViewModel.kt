@@ -50,6 +50,8 @@ class LibraryViewModel @Inject constructor(
 
     val isCloudSignedIn: StateFlow<Boolean> = googleDriveLibraryRepository.isSignedIn
     val cloudAccountEmail: StateFlow<String?> = googleDriveLibraryRepository.accountEmail
+    val cloudLastError: StateFlow<String?> = googleDriveLibraryRepository.lastError
+    fun clearCloudError() = googleDriveLibraryRepository.clearLastError()
 
     /** Wizualizer widmowy Now Playing — patrz DESIGN.md, `AudioVisualizerAnalyzer`. */
     val visualizerFrame: StateFlow<VisualizerFrame> = visualizerAnalyzer.frame

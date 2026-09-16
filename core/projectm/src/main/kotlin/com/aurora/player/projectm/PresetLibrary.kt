@@ -16,7 +16,15 @@ import java.io.File
  * ładuje dokładnie wskazany plik, playlist w ogóle nie jest już używany do wyboru presetu.
  */
 object PresetLibrary {
-    fun listPresets(presetsRootDir: String, mode: ProjectMVisualizerMode): List<String> {
+    /**
+     * @param blockedFileNames nazwy plików (nie pełne ścieżki — patrz [PresetBlocklistStore])
+     *   trwale wykluczone przez użytkownika z losowania/cyklu, niezależnie od kategorii.
+     */
+    fun listPresets(
+        presetsRootDir: String,
+        mode: ProjectMVisualizerMode,
+        blockedFileNames: Set<String> = emptySet(),
+    ): List<String> {
         val folders = mode.presetSubfolders?.map { File(presetsRootDir, it) }
             ?: listOf(File(presetsRootDir))
         return folders
@@ -24,6 +32,7 @@ object PresetLibrary {
             .flatMap { folder ->
                 folder.walkTopDown()
                     .filter { it.isFile && it.extension.equals("milk", ignoreCase = true) }
+                    .filterNot { it.name in blockedFileNames }
                     .map { it.absolutePath }
                     .toList()
             }

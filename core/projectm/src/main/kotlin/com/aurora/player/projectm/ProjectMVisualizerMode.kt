@@ -23,38 +23,15 @@ enum class ProjectMVisualizerMode(
     /** Używana przez kompaktowy przycisk trybu (małe okno) — patrz `CompactModeButton` w ProjectMSurface.kt. */
     val icon: ImageVector,
 ) {
+    // Etap 20/21, zgłoszenie: dopasowanie trybu do gatunku (dawne `defaultForGenre`) w praktyce
+    // zawężało losowanie do małych podfolderów (np. Ambient = tylko Hypnotic+Drawing, 174 z ~580
+    // presetów) — im mniejsza pula, tym częściej trafiał się ten sam, źle dopasowany preset (patrz
+    // DESIGN.md Etap 19/20: powtarzający się preset z motywem "M"). Zamiast dalej ręcznie
+    // przeszukiwać setki plików w poszukiwaniu winowajcy, domyślny wybór to teraz zawsze ALL —
+    // najszersza pula rozcieńcza każdy pojedynczy zły preset, a użytkownik nadal może ręcznie
+    // wybrać Ambient/Spectrum/Particle przełącznikiem, jeśli akurat chce węższy nastrój.
     ALL("Wszystkie", null, Icons.Filled.Apps),
     AMBIENT("Ambient", listOf("Hypnotic", "Drawing"), Icons.Filled.BlurOn),
     SPECTRUM("Spectrum", listOf("Waveform"), Icons.Filled.GraphicEq),
     PARTICLE("Particle", listOf("Particles", "Sparkle", "Supernova"), Icons.Filled.Grain),
-    ;
-
-    companion object {
-        /**
-         * Domyślny tryb wg gatunku utworu (Etap 10: "adaptacja do gatunku") — prosta heurystyka
-         * na słowach kluczowych, nie klasyfikator. Użytkownik zawsze może nadpisać ręcznie
-         * przełącznikiem trybu — to tylko sensowny punkt startowy, nie sztywna reguła.
-         */
-        fun defaultForGenre(genre: String?): ProjectMVisualizerMode {
-            val normalized = genre?.trim()?.lowercase().orEmpty()
-            if (normalized.isEmpty()) return ALL
-            return when {
-                AMBIENT_KEYWORDS.any { it in normalized } -> AMBIENT
-                SPECTRUM_KEYWORDS.any { it in normalized } -> SPECTRUM
-                PARTICLE_KEYWORDS.any { it in normalized } -> PARTICLE
-                else -> ALL
-            }
-        }
-
-        private val AMBIENT_KEYWORDS = listOf(
-            "jazz", "classical", "klasyczna", "acoustic", "akustyczna", "ambient", "chill",
-            "lo-fi", "lofi", "piano",
-        )
-        private val SPECTRUM_KEYWORDS = listOf(
-            "electronic", "elektroniczna", "techno", "house", "edm", "trance", "synth",
-        )
-        private val PARTICLE_KEYWORDS = listOf(
-            "rock", "metal", "pop", "dance", "hip-hop", "hip hop", "rap", "punk",
-        )
-    }
 }

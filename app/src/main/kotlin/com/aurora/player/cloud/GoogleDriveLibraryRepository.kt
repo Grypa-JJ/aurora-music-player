@@ -3,6 +3,7 @@ package com.aurora.player.cloud
 import android.content.Context
 import android.content.Intent
 import android.content.IntentSender
+import android.util.Log
 import com.aurora.player.domain.model.Track
 import com.aurora.player.domain.model.TrackSource
 import com.aurora.player.domain.repository.CloudLibraryRepository
@@ -66,6 +67,20 @@ class GoogleDriveLibraryRepository @Inject constructor(
     private val _accountEmail = MutableStateFlow<String?>(null)
     override val accountEmail: StateFlow<String?> = _accountEmail
 
+    // Zgłoszenie: "kliknięcie w konto w pickerze nic nie robi" — CAŁY ten flow dotąd połykał
+    // każdy błąd w ciszy (patrz stare `catch (e: ApiException) { false }` niżej i
+    // `.addOnFailureListener { continuation.resume(null) }`) — użytkownik nie miał ŻADNEGO
+    // sposobu dowiedzieć się, na którym kroku i dlaczego się wysypało. Ten stan niesie
+    // czytelny, techniczny opis ostatniego błędu (kod ApiException, gdy dostępny — np.
+    // DEVELOPER_ERROR=10 oznacza niezgodność SHA-1/OAuth Client ID w Google Cloud Console,
+    // NETWORK_ERROR=7 to brak sieci) do pokazania w UI zamiast martwej ciszy.
+    private val _lastError = MutableStateFlow<String?>(null)
+    override val lastError: StateFlow<String?> = _lastError
+
+    override fun clearLastError() {
+        _lastError.value = null
+    }
+
     @Volatile
     private var cachedAccessToken: String? = null
 
@@ -75,9 +90,18 @@ class GoogleDriveLibraryRepository @Inject constructor(
      * Google wymaga ekranu zgody, który wołający ma odpalić przez `ActivityResultLauncher`.
      */
     suspend fun connect(): IntentSender? {
+        _lastError.value = null
         val result = awaitAuthorize() ?: return null
         if (result.hasResolution()) {
-            return result.pendingIntent?.intentSender
+            val intentSender = result.pendingIntent?.intentSender
+            if (intentSender == null) {
+                // Bardzo rzadki, ale realny przypadek: Google mówi "trzeba zgody" (hasResolution
+                // == true) ale nie dał nam jak jej zażądać — bez tego logowania to wyglądałoby
+                // dokładnie jak zgłoszony bug ("nic się nie dzieje po kliknięciu ikony chmury").
+                Log.e(TAG, "connect(): hasResolution=true ale pendingIntent == null")
+                _lastError.value = "Google nie zwrócił ekranu zgody (pendingIntent=null)."
+            }
+            return intentSender
         }
         applyResult(result)
         return null
@@ -85,12 +109,38 @@ class GoogleDriveLibraryRepository @Inject constructor(
 
     /** Wołane z callbacku `ActivityResultLauncher` po ekranie zgody Google. */
     fun handleAuthorizationResult(data: Intent?): Boolean {
-        val intent = data ?: return false
+        val intent = data ?: run {
+            // To jest DOKŁADNIE zgłoszony bug: "kliknięcie w konto w pickerze nic nie robi" —
+            // jeśli `data` (Intent z ActivityResult) jest null, to znaczy że sam system
+            // account-picker/consent-screen zwrócił RESULT_CANCELED albo pustą odpowiedź, i
+            // wcześniejszy kod po prostu wychodził tu cicho przez `return false` bez ŻADNEGO
+            // śladu w logach — nie dało się odróżnić "user anulował" od "coś się wywaliło".
+            Log.e(TAG, "handleAuthorizationResult(): result.data == null — Activity Result nie " +
+                "przyniósł Intentu (user anulował ekran zgody, albo Google Play Services " +
+                "zwróciło pustą odpowiedź bez wyjaśnienia)")
+            _lastError.value = "Ekran logowania Google zamknął się bez wyniku (anulowano lub błąd Play Services)."
+            return false
+        }
         return try {
             val result = authorizationClient.getAuthorizationResultFromIntent(intent)
             applyResult(result)
             true
         } catch (e: ApiException) {
+            // statusCode 10 = DEVELOPER_ERROR (niemal zawsze: SHA-1 użyty do podpisania tego
+            // builda nie jest zarejestrowany w Google Cloud Console dla applicationId
+            // com.aurora.player, albo w ogóle brak tam klienta OAuth typu "Android") —
+            // to najbardziej prawdopodobna przyczyna tego zgłoszenia, teraz W KOŃCU widoczna.
+            Log.e(TAG, "handleAuthorizationResult(): ApiException statusCode=${e.statusCode} " +
+                "message=${e.message}", e)
+            _lastError.value = "Błąd logowania Google (kod ${e.statusCode}): ${e.message}"
+            false
+        } catch (e: Exception) {
+            // Etap 18→19: poprzedni kod łapał WYŁĄCZNIE ApiException — każdy inny wyjątek
+            // (np. gdyby `toGoogleSignInAccount()` rzucił na jakiejś wersji play-services-auth)
+            // przechodziłby NIEOBSŁUŻONY przez callback ActivityResultLaunchera, co w Compose
+            // potrafi objawić się jako pozornie "nic się nie dzieje" zamiast czytelnego crasha.
+            Log.e(TAG, "handleAuthorizationResult(): nieoczekiwany wyjątek ${e::class.simpleName}", e)
+            _lastError.value = "Nieoczekiwany błąd logowania: ${e::class.simpleName} — ${e.message}"
             false
         }
     }
@@ -99,13 +149,32 @@ class GoogleDriveLibraryRepository @Inject constructor(
         suspendCancellableCoroutine { continuation ->
             authorizationClient.authorize(authorizationRequest)
                 .addOnSuccessListener { result -> continuation.resume(result) }
-                .addOnFailureListener { continuation.resume(null) }
+                .addOnFailureListener { exception ->
+                    val statusCode = (exception as? ApiException)?.statusCode
+                    Log.e(TAG, "authorize() failure, statusCode=$statusCode", exception)
+                    _lastError.value = if (statusCode != null) {
+                        "Błąd autoryzacji Google (kod $statusCode): ${exception.message}"
+                    } else {
+                        "Błąd autoryzacji Google: ${exception.message}"
+                    }
+                    continuation.resume(null)
+                }
         }
 
     private fun applyResult(result: AuthorizationResult) {
         cachedAccessToken = result.accessToken
-        _accountEmail.value = result.toGoogleSignInAccount()?.email
+        _accountEmail.value = try {
+            result.toGoogleSignInAccount()?.email
+        } catch (e: Exception) {
+            Log.e(TAG, "toGoogleSignInAccount() rzucił wyjątek — kontynuuję bez adresu e-mail", e)
+            null
+        }
         _isSignedIn.value = result.accessToken != null
+        if (result.accessToken == null) {
+            Log.e(TAG, "applyResult(): result.accessToken == null mimo braku hasResolution — " +
+                "autoryzacja 'się udała' ale nie dała tokenu")
+            _lastError.value = "Google potwierdził logowanie, ale nie zwrócił tokenu dostępu."
+        }
     }
 
     override fun signOut() {
@@ -182,5 +251,6 @@ class GoogleDriveLibraryRepository @Inject constructor(
 
     private companion object {
         const val SOURCE_DISCRIMINATOR = "google_drive"
+        const val TAG = "GoogleDriveLibraryRepo"
     }
 }

@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -38,6 +39,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import java.io.File
 import kotlin.random.Random
 
 /**
@@ -94,6 +96,11 @@ fun ProjectMSurface(
     var presetsDir by remember { mutableStateOf<String?>(null) }
     var showSettingsPanel by remember { mutableStateOf(false) }
     val viewRef = remember { mutableStateOf<ProjectMSurfaceView?>(null) }
+    // Etap 19/20 (DESIGN.md) — zgłoszenie "presety nie są przypisane odpowiednio do danej
+    // kategorii": ręczna rekuracja 581 plików `.milk` od zewnętrznego kuratora się nie skaluje,
+    // więc zamiast tego user może trwale wykluczyć konkretny, źle dopasowany wygląd w miejscu
+    // gdzie faktycznie go widzi — patrz [PresetBlocklistStore] i przycisk w panelu ustawień.
+    var blockedFileNames by remember { mutableStateOf(PresetBlocklistStore.getBlockedFileNames(context)) }
 
     LaunchedEffect(Unit) {
         presetsDir = withContext(Dispatchers.IO) {
@@ -102,8 +109,8 @@ fun ProjectMSurface(
     }
 
     val dir = presetsDir
-    val presetList = remember(dir, mode) {
-        dir?.let { PresetLibrary.listPresets(it, mode) }.orEmpty()
+    val presetList = remember(dir, mode, blockedFileNames) {
+        dir?.let { PresetLibrary.listPresets(it, mode, blockedFileNames) }.orEmpty()
     }
 
     // Jeśli jeszcze nic nie wybrano, ALBO poprzedni wybór nie należy już do bieżącej kategorii
@@ -137,7 +144,16 @@ fun ProjectMSurface(
         viewRef.value?.applySettings(settings)
     }
 
-    if (dir != null) {
+    // Etap 19/20/21, zgłoszenie: "za każdym razem widać na sekundę logo M, dopiero potem
+    // właściwy, losowy wizualizer" — silnik projectM zaczyna renderować WŁASNY wewnętrzny
+    // domyślny wzorzec natychmiast po `engine.create()`, zanim nasz Kotlinowy async wybór
+    // presetu (dysk I/O + `Random.nextInt`) zdąży się skończyć i wywołać `loadPresetFile`. To
+    // jest realny wyścig, nie "zły plik" — potwierdzone tym, że ten sam wzorzec pojawiał się
+    // NIEZALEŻNIE od trybu/folderu i nawet po usunięciu podejrzanych presetów. Naprawa: w ogóle
+    // NIE montować `AndroidView`/silnika, dopóki `currentPresetPath` nie jest już znany — silnik
+    // startuje od razu z poprawnym `initialPresetPath`, więc nie ma ani jednej klatki, w której
+    // mógłby pokazać się wewnętrzny domyślny wzorzec zamiast naszego presetu.
+    if (dir != null && currentPresetPath != null) {
         Box(modifier = modifier) {
             AndroidView(
                 modifier = Modifier
@@ -220,6 +236,13 @@ fun ProjectMSurface(
                             indication = null,
                             interactionSource = remember { MutableInteractionSource() },
                         ) {},
+                    onBlockCurrentPreset = currentPresetPath?.let { path ->
+                        {
+                            PresetBlocklistStore.block(context, File(path).name)
+                            blockedFileNames = PresetBlocklistStore.getBlockedFileNames(context)
+                            showSettingsPanel = false
+                        }
+                    },
                 )
             }
         }

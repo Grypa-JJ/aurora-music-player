@@ -134,6 +134,7 @@ class PlayerController @Inject constructor(
             return
         }
         currentQueue = tracks
+        _playbackState.update { it.copy(queue = currentQueue) }
         mediaController.setMediaItems(tracks.map { MediaItem.fromUri(it.uri) }, startIndex, 0L)
         mediaController.prepare()
         mediaController.play()
@@ -143,6 +144,10 @@ class PlayerController @Inject constructor(
     override fun togglePlayPause() {
         val mediaController = controller ?: return
         if (mediaController.isPlaying) mediaController.pause() else mediaController.play()
+    }
+
+    override fun pause() {
+        controller?.pause()
     }
 
     override fun seekTo(positionMs: Long) {
@@ -156,5 +161,37 @@ class PlayerController @Inject constructor(
 
     override fun skipToPrevious() {
         controller?.seekToPreviousMediaItem()
+    }
+
+    override fun addToQueue(track: Track) {
+        if (currentQueue.isEmpty()) {
+            playQueue(listOf(track))
+            return
+        }
+        val mediaController = controller ?: return
+        currentQueue = currentQueue + track
+        mediaController.addMediaItem(MediaItem.fromUri(track.uri))
+        _playbackState.update { it.copy(queue = currentQueue) }
+    }
+
+    override fun removeFromQueue(index: Int) {
+        val mediaController = controller ?: return
+        if (index !in currentQueue.indices) return
+        currentQueue = currentQueue.toMutableList().apply { removeAt(index) }
+        mediaController.removeMediaItem(index)
+        _playbackState.update { it.copy(queue = currentQueue) }
+    }
+
+    override fun moveQueueItem(fromIndex: Int, toIndex: Int) {
+        val mediaController = controller ?: return
+        if (fromIndex !in currentQueue.indices || toIndex !in currentQueue.indices) return
+        currentQueue = currentQueue.toMutableList().apply { add(toIndex, removeAt(fromIndex)) }
+        mediaController.moveMediaItem(fromIndex, toIndex)
+        _playbackState.update { it.copy(queue = currentQueue) }
+    }
+
+    override fun playAt(index: Int) {
+        if (index !in currentQueue.indices) return
+        controller?.seekTo(index, 0L)
     }
 }

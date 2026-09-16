@@ -27,6 +27,9 @@ import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -83,6 +86,18 @@ fun LibraryScreen(
     val cloudConsentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartIntentSenderForResult(),
     ) { result -> viewModel.onCloudConsentResult(result.data) }
+
+    // Zgłoszenie: "kliknięcie w konto w pickerze nic nie robi" — flow logowania Google dotąd
+    // połykał każdy błąd w ciszy (patrz GoogleDriveLibraryRepository). Teraz każdy błąd trafia
+    // tutaj i user WIDZI, że coś poszło nie tak (i co dokładnie), zamiast martwej ciszy.
+    val cloudError by viewModel.cloudLastError.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(cloudError) {
+        cloudError?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearCloudError()
+        }
+    }
 
     LaunchedEffect(Unit) {
         val alreadyGranted = ContextCompat.checkSelfPermission(context, audioPermission) ==
@@ -226,6 +241,16 @@ fun LibraryScreen(
                     .align(Alignment.BottomCenter)
                     .padding(tokens.spacing.m),
             )
+        }
+
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                // Nad mini-playerem (który zajmuje ten sam BottomCenter) — nie jeden nad drugim.
+                .padding(bottom = 96.dp),
+        ) { data ->
+            Snackbar(snackbarData = data)
         }
     }
 }
