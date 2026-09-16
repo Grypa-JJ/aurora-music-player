@@ -22,4 +22,7 @@ interface PlaybackHistoryRepository {
      * @param fromDurationMs pełna długość [fromTrackId]
      */
     suspend fun recordTransition(fromTrackId: Long, toTrackId: Long, fromPlayedMs: Long, fromDurationMs: Long)
+
+    /** Utwór z ostatniego zakończonego odtworzenia — zasila kafel "Kontynuuj" na Android Auto. */
+    suspend fun getLastPlayedTrackId(): Long?
 }

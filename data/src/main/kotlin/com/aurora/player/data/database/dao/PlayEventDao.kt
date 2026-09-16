@@ -16,4 +16,8 @@ interface PlayEventDao {
     /** Do wyliczenia kontekstu pory dnia w GeniusScoring — DESIGN.md sekcja 5.2. */
     @Query("SELECT * FROM play_events")
     suspend fun getAll(): List<PlayEventEntity>
+
+    /** Zasila kafel "Kontynuuj" na Android Auto — patrz DESIGN.md sekcja 6. */
+    @Query("SELECT trackId FROM play_events ORDER BY timestampEnd DESC LIMIT 1")
+    suspend fun getLastPlayedTrackId(): Long?
 }

@@ -153,7 +153,7 @@ class PlayerController @Inject constructor(
         }
         currentQueue = tracks
         _playbackState.update { it.copy(queue = currentQueue) }
-        mediaController.setMediaItems(tracks.map { MediaItem.fromUri(it.uri) }, startIndex, 0L)
+        mediaController.setMediaItems(tracks.map { it.toMediaItem() }, startIndex, 0L)
         mediaController.prepare()
         mediaController.play()
         startPositionTicker()
@@ -188,7 +188,7 @@ class PlayerController @Inject constructor(
         }
         val mediaController = controller ?: return
         currentQueue = currentQueue + track
-        mediaController.addMediaItem(MediaItem.fromUri(track.uri))
+        mediaController.addMediaItem(track.toMediaItem())
         _playbackState.update { it.copy(queue = currentQueue) }
     }
 

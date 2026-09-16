@@ -200,7 +200,19 @@ fun LibraryScreen(
         // Etap 21/22: wcięcie systemowe przeniesione tu z globalnego korzenia w MainActivity —
         // patrz komentarz tam. Ten ekran nie ma nakładki, która miałaby wylewać się pod paski,
         // więc wcięcie na samym korzeniu treści jest poprawne i wystarczające.
-        Column(modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+        // Etap 33, zgłoszenie ze zrzutem ekranu: `hazeSource` był dotąd TYLKO na samej
+        // LazyColumn listy utworów, nie na nagłówku/wyszukiwarce/zakładkach nad nią — sheet
+        // wystarczająco wysoki (np. MusicSourcesSheet), żeby sięgnąć POWYŻEJ górnej krawędzi
+        // listy, widział tam "nic do rozmycia" i renderował się jako szew między rozmytym a
+        // nierozmytym pasem. Przeniesione na korzeń całego ekranu (ten sam wzorzec co
+        // NowPlayingScreen) — jeden hazeSource obejmujący wszystko, zero szwów niezależnie od
+        // wysokości sheeta.
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .hazeSource(state = hazeState),
+        ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -399,9 +411,7 @@ fun LibraryScreen(
 
                 else -> {
                     LazyColumn(
-                        modifier = Modifier
-                            .weight(1f)
-                            .hazeSource(state = hazeState),
+                        modifier = Modifier.weight(1f),
                         contentPadding = PaddingValues(
                             horizontal = tokens.spacing.s,
                             vertical = tokens.spacing.s,

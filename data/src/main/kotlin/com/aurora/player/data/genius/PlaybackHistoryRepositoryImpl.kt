@@ -67,6 +67,8 @@ class PlaybackHistoryRepositoryImpl @Inject constructor(
         updateAffinity(trackId, completed, completionRatio, now)
     }
 
+    override suspend fun getLastPlayedTrackId(): Long? = playEventDao.getLastPlayedTrackId()
+
     override suspend fun recordTransition(
         fromTrackId: Long,
         toTrackId: Long,
