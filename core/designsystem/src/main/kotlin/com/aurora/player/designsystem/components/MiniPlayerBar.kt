@@ -108,8 +108,10 @@ fun MiniPlayerBar(
         }
 
         Box(
+            // Etap 38: 36dp było poniżej minimalnego dotykowego obszaru 48dp (WCAG/Material) —
+            // realny gap znaleziony przy audycie DESIGN.md, nie tylko dokumentacyjny dryf.
             modifier = Modifier
-                .size(36.dp)
+                .size(48.dp)
                 .clip(CircleShape)
                 .background(MaterialTheme.colorScheme.primary)
                 .clickable(onClick = onTogglePlayPause),
@@ -119,7 +121,7 @@ fun MiniPlayerBar(
                 imageVector = if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
                 contentDescription = if (isPlaying) "Pauza" else "Odtwórz",
                 tint = Color.White,
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(24.dp),
             )
         }
     }

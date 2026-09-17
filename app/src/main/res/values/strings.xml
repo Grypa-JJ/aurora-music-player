@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Aurora</string>
+
+    <!-- Custom action serca w Now Playing na Android Auto — patrz DESIGN.md sekcja 6. -->
+    <string name="favorite_add">Dodaj do ulubionych</string>
+    <string name="favorite_remove">Usuń z ulubionych</string>
 </resources>

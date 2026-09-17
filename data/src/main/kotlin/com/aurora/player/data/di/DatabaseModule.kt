@@ -3,6 +3,8 @@ package com.aurora.player.data.di
 import android.content.Context
 import androidx.room.Room
 import com.aurora.player.data.database.AuroraDatabase
+import com.aurora.player.data.database.dao.AudiobookDao
+import com.aurora.player.data.database.dao.EqStateDao
 import com.aurora.player.data.database.dao.FavoriteTrackDao
 import com.aurora.player.data.database.dao.LyricsCacheDao
 import com.aurora.player.data.database.dao.PlayEventDao
@@ -65,4 +67,10 @@ object DatabaseModule {
 
     @Provides
     fun providePodcastDao(database: AuroraDatabase): PodcastDao = database.podcastDao()
+
+    @Provides
+    fun provideEqStateDao(database: AuroraDatabase): EqStateDao = database.eqStateDao()
+
+    @Provides
+    fun provideAudiobookDao(database: AuroraDatabase): AudiobookDao = database.audiobookDao()
 }

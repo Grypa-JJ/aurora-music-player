@@ -26,6 +26,11 @@
         android:theme="@style/Theme.Aurora"
         android:supportsRtl="true">
 
+        <!-- Rozpoznanie jako apka mediów przez Android Auto — patrz DESIGN.md sekcja 6. -->
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
+
         <!--
             configChanges na MainActivity: bez tego obrót ekranu niszczył i odtwarzał całą
             Activity (domyślne zachowanie Androida) — czyli też GLSurfaceView/kontekst EGL
@@ -47,13 +52,16 @@
             </intent-filter>
         </activity>
 
-        <!-- Odtwarzanie w tle + powiadomienie z kontrolkami — patrz DESIGN.md etap 1. -->
+        <!-- Odtwarzanie w tle + powiadomienie z kontrolkami + drzewo przeglądania Android Auto —
+             patrz DESIGN.md etap 1 i sekcja 6. -->
         <service
             android:name=".playback.PlaybackService"
             android:exported="true"
             android:foregroundServiceType="mediaPlayback">
             <intent-filter>
+                <action android:name="androidx.media3.session.MediaLibraryService" />
                 <action android:name="androidx.media3.session.MediaSessionService" />
+                <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
     </application>

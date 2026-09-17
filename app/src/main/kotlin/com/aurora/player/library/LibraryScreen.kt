@@ -5,9 +5,6 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibilityScope
-import androidx.compose.animation.ExperimentalSharedTransitionApi
-import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -21,16 +18,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.AddToQueue
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudOff
@@ -39,7 +34,6 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.Podcasts
 import androidx.compose.material.icons.filled.QueueMusic
-import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.AlertDialog
@@ -73,7 +67,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.aurora.player.album.AlbumsScreen
 import com.aurora.player.artist.ArtistsScreen
-import com.aurora.player.designsystem.components.MiniPlayerBar
+import com.aurora.player.designsystem.components.DomainShortcutCard
 import com.aurora.player.designsystem.components.TrackAction
 import com.aurora.player.designsystem.components.TrackActionsSheet
 import com.aurora.player.designsystem.components.TrackListItem
@@ -103,22 +97,16 @@ private enum class LibraryTab(val label: String) {
     Artists("Wykonawcy"),
 }
 
-@OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 fun LibraryScreen(
     viewModel: LibraryViewModel,
-    onOpenNowPlaying: () -> Unit,
-    onOpenGeniusMixes: () -> Unit,
     onOpenFavorites: () -> Unit,
     onOpenPlaylists: () -> Unit,
     onOpenAlbum: (name: String, artist: String) -> Unit,
     onOpenArtist: (String) -> Unit,
-    onOpenRadio: () -> Unit,
     onOpenPodcasts: () -> Unit,
+    onOpenAccount: () -> Unit,
     modifier: Modifier = Modifier,
-    sharedTransitionScope: SharedTransitionScope? = null,
-    animatedVisibilityScope: AnimatedVisibilityScope? = null,
-    albumArtSharedKey: Any = "album_art",
 ) {
     val context = LocalContext.current
     val uiState by viewModel.uiState.collectAsState()
@@ -225,23 +213,36 @@ fun LibraryScreen(
                     style = AuroraTextStyles.Headline,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
-                // Etap 12/22, zgłoszenie: osobna ikona per dostawca (chmura + NAS + docelowo
-                // OneDrive/Dropbox) nie skaluje się — JEDNA ikona "Źródła muzyki" otwiera listę
-                // wszystkich źródeł (DESIGN.md Etap 12 to zresztą od początku tak zakładał: ekran
-                // "Źródła muzyki" ze statusem per źródło, nie osobne przyciski w nagłówku).
-                val anySourceConnected = isCloudSignedIn || isWebDavConnected
-                Icon(
-                    imageVector = if (anySourceConnected) Icons.Filled.Cloud else Icons.Filled.CloudOff,
-                    contentDescription = "Źródła muzyki",
-                    tint = if (anySourceConnected) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f)
-                    },
-                    modifier = Modifier
-                        .size(24.dp)
-                        .clickable { showSourcesSheet = true },
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(tokens.spacing.m)) {
+                    // Etap 36: konto (login/sync między telefonem a desktopem) — osobna ikona od
+                    // "Źródeł muzyki" celowo, to dwa różne pojęcia (skąd appka BIERZE utwory vs.
+                    // czyje konto SYNCHRONIZUJE Ulubione/playlisty/EQ).
+                    Icon(
+                        imageVector = Icons.Filled.AccountCircle,
+                        contentDescription = "Konto",
+                        tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clickable(onClick = onOpenAccount),
+                    )
+                    // Etap 12/22, zgłoszenie: osobna ikona per dostawca (chmura + NAS + docelowo
+                    // OneDrive/Dropbox) nie skaluje się — JEDNA ikona "Źródła muzyki" otwiera listę
+                    // wszystkich źródeł (DESIGN.md Etap 12 to zresztą od początku tak zakładał: ekran
+                    // "Źródła muzyki" ze statusem per źródło, nie osobne przyciski w nagłówku).
+                    val anySourceConnected = isCloudSignedIn || isWebDavConnected
+                    Icon(
+                        imageVector = if (anySourceConnected) Icons.Filled.Cloud else Icons.Filled.CloudOff,
+                        contentDescription = "Źródła muzyki",
+                        tint = if (anySourceConnected) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f)
+                        },
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clickable { showSourcesSheet = true },
+                    )
+                }
             }
 
             OutlinedTextField(
@@ -266,16 +267,17 @@ fun LibraryScreen(
                     .padding(horizontal = tokens.spacing.m),
             )
 
-            // Etap 22, user: parytet ze Spotify — skróty do sekcji zamiast ledwo klikalnych
-            // ikonek w nagłówku (jak dotąd). Pozioma półka, nie siatka — jedna ręka, kciuk,
-            // telefon: przewijanie w bok jest tańsze niż przewijanie całego ekranu w dół.
+            // Etap 37: Genius/Radio przeniesione na Home (ekran startowy, kuratorski dashboard
+            // ze skrótami do wszystkich 8 domen treści) — zostają tu tylko skróty do rzeczy
+            // ściśle "Twoich" w obrębie samej Biblioteki (Ulubione/Playlisty/Subskrypcje), żeby
+            // nie trzeba było wracać na Home po prostą, częstą czynność w obrębie tego taba.
             LazyRow(
                 contentPadding = PaddingValues(horizontal = tokens.spacing.m),
                 horizontalArrangement = Arrangement.spacedBy(tokens.spacing.s),
                 modifier = Modifier.padding(top = tokens.spacing.m),
             ) {
                 item {
-                    QuickAccessCard(
+                    DomainShortcutCard(
                         icon = Icons.Filled.FavoriteBorder,
                         title = "Ulubione",
                         subtitle = "${favoriteTrackIds.size} utworów",
@@ -283,7 +285,7 @@ fun LibraryScreen(
                     )
                 }
                 item {
-                    QuickAccessCard(
+                    DomainShortcutCard(
                         icon = Icons.Filled.QueueMusic,
                         title = "Playlisty",
                         subtitle = "${playlists.size} playlist",
@@ -291,26 +293,10 @@ fun LibraryScreen(
                     )
                 }
                 item {
-                    QuickAccessCard(
-                        icon = Icons.Filled.AutoAwesome,
-                        title = "Genius",
-                        subtitle = "Miksy dla Ciebie",
-                        onClick = onOpenGeniusMixes,
-                    )
-                }
-                item {
-                    QuickAccessCard(
-                        icon = Icons.Filled.Radio,
-                        title = "Radio",
-                        subtitle = "Stacje na żywo",
-                        onClick = onOpenRadio,
-                    )
-                }
-                item {
-                    QuickAccessCard(
+                    DomainShortcutCard(
                         icon = Icons.Filled.Podcasts,
-                        title = "Podcasty",
-                        subtitle = "Twoje subskrypcje",
+                        title = "Subskrypcje",
+                        subtitle = "Podkasty i audiobooki",
                         onClick = onOpenPodcasts,
                     )
                 }
@@ -435,30 +421,15 @@ fun LibraryScreen(
             }
         }
 
-        playbackState.currentTrack?.let { track ->
-            MiniPlayerBar(
-                title = track.title,
-                artist = track.artist,
-                albumArtUrl = track.albumArtUri,
-                isPlaying = playbackState.isPlaying,
-                onTogglePlayPause = viewModel::onTogglePlayPause,
-                onClick = onOpenNowPlaying,
-                hazeState = hazeState,
-                sharedTransitionScope = sharedTransitionScope,
-                animatedVisibilityScope = animatedVisibilityScope,
-                albumArtSharedKey = albumArtSharedKey,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(tokens.spacing.m),
-            )
-        }
-
+        // Etap 37: MiniPlayerBar przeniesiony na poziom AuroraNavHost/Scaffold (jeden wspólny
+        // pasek nad AuroraBottomNav, widoczny na wszystkich 4 zakładkach, nie tylko tutaj) —
+        // patrz AuroraNavHost.kt. Snackbar nie potrzebuje już ręcznego odstępu pod mini-player,
+        // bo ten ekran żyje wewnątrz Scaffold.content, które Compose już przycina nad bottomBar.
         SnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                // Nad mini-playerem (który zajmuje ten sam BottomCenter) — nie jeden nad drugim.
-                .padding(bottom = 96.dp),
+                .padding(bottom = tokens.spacing.m),
         ) { data ->
             Snackbar(snackbarData = data)
         }
@@ -547,58 +518,6 @@ fun LibraryScreen(
             },
             onDismiss = { trackForPlaylistSheet = null },
         )
-    }
-}
-
-@Composable
-private fun QuickAccessCard(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    subtitle: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val tokens = LocalAuroraTokens.current
-
-    Row(
-        modifier = modifier
-            .width(180.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .clickable(onClick = onClick)
-            .padding(tokens.spacing.s + 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(20.dp),
-            )
-        }
-        Column(modifier = Modifier.padding(start = tokens.spacing.s)) {
-            Text(
-                text = title,
-                style = AuroraTextStyles.Label,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = subtitle,
-                style = AuroraTextStyles.Caption,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
     }
 }
 

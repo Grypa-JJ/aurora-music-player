@@ -3,11 +3,23 @@ package com.aurora.player.library
 import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aurora.player.archive.toTrack
+import com.aurora.player.audiobook.toTrack
 import com.aurora.player.cloud.GoogleDriveLibraryRepository
 import com.aurora.player.cloud.WebDavLibraryRepository
 import com.aurora.player.color.AlbumArtColorExtractor
 import com.aurora.player.color.AlbumArtPalette
+import com.aurora.player.domain.model.ArchiveCollections
+import com.aurora.player.domain.model.ArchiveItem
+import com.aurora.player.domain.model.ArchiveTrack
+import com.aurora.player.domain.model.Audiobook
+import com.aurora.player.domain.model.AudiobookChapter
+import com.aurora.player.domain.model.AudiobookSearchResult
+import com.aurora.player.domain.model.IndependentTrack
+import com.aurora.player.domain.repository.ArchiveRepository
+import com.aurora.player.domain.repository.AudiobookRepository
 import com.aurora.player.domain.repository.AudioMetadataRepository
+import com.aurora.player.domain.repository.IndependentMusicRepository
 import com.aurora.player.domain.model.EqState
 import com.aurora.player.domain.model.GeniusMix
 import com.aurora.player.domain.model.LyricsResult
@@ -30,6 +42,7 @@ import com.aurora.player.domain.repository.PodcastCatalogRepository
 import com.aurora.player.domain.repository.PodcastRepository
 import com.aurora.player.domain.repository.RadioRepository
 import com.aurora.player.domain.usecase.GetTracksUseCase
+import com.aurora.player.independent.toTrack
 import com.aurora.player.playback.SleepTimerController
 import com.aurora.player.podcast.toTrack
 import com.aurora.player.radio.toTrack
@@ -59,6 +72,9 @@ data class LibraryUiState(
     val allTracks: List<Track> get() = tracks + cloudTracks + webDavTracks
 }
 
+/** Ile razy mocniej ulubiony utwór liczy się w gustcie "Dla Ciebie" niż zwykła obecność w bibliotece. */
+private const val FAVORITE_TASTE_WEIGHT = 5
+
 @HiltViewModel
 class LibraryViewModel @Inject constructor(
     private val getTracksUseCase: GetTracksUseCase,
@@ -78,6 +94,9 @@ class LibraryViewModel @Inject constructor(
     private val radioRepository: RadioRepository,
     private val podcastRepository: PodcastRepository,
     private val podcastCatalogRepository: PodcastCatalogRepository,
+    private val audiobookRepository: AudiobookRepository,
+    private val archiveRepository: ArchiveRepository,
+    private val independentMusicRepository: IndependentMusicRepository,
 ) : ViewModel() {
 
     val isCloudSignedIn: StateFlow<Boolean> = googleDriveLibraryRepository.isSignedIn
@@ -512,5 +531,188 @@ class LibraryViewModel @Inject constructor(
             _podcastSearchResults.value = podcastCatalogRepository.topPodcastsByCountry(countryCode)
             _isSearchingPodcasts.value = false
         }
+    }
+
+    // --- Audiobooki (LibriVox) — DESIGN.md Etap 37 ---
+
+    val audiobookLibrary: StateFlow<List<Audiobook>> = audiobookRepository.library
+
+    private val _audiobookSearchResults = MutableStateFlow<List<AudiobookSearchResult>>(emptyList())
+    val audiobookSearchResults: StateFlow<List<AudiobookSearchResult>> = _audiobookSearchResults.asStateFlow()
+
+    private val _isSearchingAudiobooks = MutableStateFlow(false)
+    val isSearchingAudiobooks: StateFlow<Boolean> = _isSearchingAudiobooks.asStateFlow()
+
+    fun searchAudiobooks(query: String) {
+        viewModelScope.launch {
+            _isSearchingAudiobooks.value = true
+            _audiobookSearchResults.value = audiobookRepository.search(query)
+            _isSearchingAudiobooks.value = false
+        }
+    }
+
+    /**
+     * Propozycje wg języka + popularności (DESIGN.md Etap 37) — ta sama lista/state co wyszukiwanie
+     * ([audiobookSearchResults]), wypełniana od razu przy wejściu na ekran, żeby user nigdy nie
+     * widział pustego ekranu (ten sam wzorzec co [loadTopPodcasts]).
+     */
+    fun loadRecommendedAudiobooks(languageIso3: String) {
+        viewModelScope.launch {
+            _isSearchingAudiobooks.value = true
+            _audiobookSearchResults.value = audiobookRepository.trending(languageIso3)
+            _isSearchingAudiobooks.value = false
+        }
+    }
+
+    fun addAudiobookToLibrary(id: String, onResult: (Audiobook?) -> Unit = {}) {
+        viewModelScope.launch { onResult(audiobookRepository.addToLibrary(id)) }
+    }
+
+    fun removeAudiobookFromLibrary(id: String) {
+        viewModelScope.launch { audiobookRepository.removeFromLibrary(id) }
+    }
+
+    private val _audiobookChapters = MutableStateFlow<List<AudiobookChapter>>(emptyList())
+    val audiobookChapters: StateFlow<List<AudiobookChapter>> = _audiobookChapters.asStateFlow()
+
+    private val _isLoadingAudiobookChapters = MutableStateFlow(false)
+    val isLoadingAudiobookChapters: StateFlow<Boolean> = _isLoadingAudiobookChapters.asStateFlow()
+
+    fun loadAudiobookChapters(id: String) {
+        viewModelScope.launch {
+            _isLoadingAudiobookChapters.value = true
+            _audiobookChapters.value = audiobookRepository.fetchChapters(id)
+            _isLoadingAudiobookChapters.value = false
+        }
+    }
+
+    /** Odtwarza rozdział i od razu przeskakuje do zapisanej pozycji ("gdzie skończyłem"). */
+    fun onPlayAudiobookChapter(chapter: AudiobookChapter, audiobook: Audiobook) {
+        viewModelScope.launch {
+            val track = chapter.toTrack(audiobook)
+            val savedPosition = audiobookRepository.getPlaybackPosition(track.id)
+            playerRepository.playQueue(listOf(track))
+            if (savedPosition > 0L) playerRepository.seekTo(savedPosition)
+        }
+    }
+
+    // --- Archiwum (Internet Archive) — DESIGN.md Etap 37 ---
+
+    private val _archiveItems = MutableStateFlow<List<ArchiveItem>>(emptyList())
+    val archiveItems: StateFlow<List<ArchiveItem>> = _archiveItems.asStateFlow()
+
+    private val _isLoadingArchive = MutableStateFlow(false)
+    val isLoadingArchive: StateFlow<Boolean> = _isLoadingArchive.asStateFlow()
+
+    fun browseArchiveCollection(collection: String) {
+        viewModelScope.launch {
+            _isLoadingArchive.value = true
+            _archiveItems.value = archiveRepository.browseCollection(collection)
+            _isLoadingArchive.value = false
+        }
+    }
+
+    /**
+     * "Dla Ciebie" — gust wyprowadzony z CAŁEJ lokalnej biblioteki (wykonawca + gatunek), z ulubionymi
+     * liczonymi [FAVORITE_TASTE_WEIGHT] razy mocniej niż zwykła obecność w bibliotece — tak cała
+     * zawartość urządzenia wpływa na dopasowanie, a ulubione wciąż dominują ranking. Patrz KDoc
+     * [ArchiveRepository.personalizedForYou] dla dalszej części algorytmu.
+     *
+     * Tylko [TrackSource.LOCAL]: utwory z Google Drive/NAS-WebDAV mają w `Track.artist`/`Track.genre`
+     * placeholdery (nazwa usługi/konta, nie realne metadane odczytane z pliku) — wliczanie ich
+     * zaśmiecałoby gust, a w skrajnym przypadku wysłałoby e-mail konta Google jako `creator:` do
+     * publicznego wyszukiwania archive.org. Brak lokalnej biblioteki = brak sygnału, wywołujący
+     * (ArchiveScreen) powinien wtedy pokazać zwykłe [browseArchiveCollection].
+     */
+    fun loadPersonalizedArchive() {
+        viewModelScope.launch {
+            val localTracks = _uiState.value.allTracks.filter { it.source == TrackSource.LOCAL }
+            val favoriteIds = favoritesRepository.favoriteTrackIds.value
+            val weighted = localTracks.flatMap { track ->
+                List(if (track.id in favoriteIds) FAVORITE_TASTE_WEIGHT else 1) { track }
+            }
+            val topArtists = weighted.map { it.artist }
+                .filter { it.isNotBlank() }
+                .groupingBy { it }.eachCount().entries
+                .sortedByDescending { it.value }.map { it.key }
+            val topGenres = weighted.mapNotNull { it.genre?.lowercase()?.trim() }
+                .filter { it.isNotBlank() }
+                .groupingBy { it }.eachCount().entries
+                .sortedByDescending { it.value }.map { it.key }
+
+            if (topArtists.isEmpty() && topGenres.isEmpty()) {
+                browseArchiveCollection(ArchiveCollections.LIVE_MUSIC)
+                return@launch
+            }
+            _isLoadingArchive.value = true
+            _archiveItems.value = archiveRepository.personalizedForYou(topArtists, topGenres)
+            _isLoadingArchive.value = false
+        }
+    }
+
+    fun searchArchive(query: String) {
+        viewModelScope.launch {
+            _isLoadingArchive.value = true
+            _archiveItems.value = archiveRepository.search(query)
+            _isLoadingArchive.value = false
+        }
+    }
+
+    private val _archiveTracks = MutableStateFlow<List<ArchiveTrack>>(emptyList())
+    val archiveTracks: StateFlow<List<ArchiveTrack>> = _archiveTracks.asStateFlow()
+
+    private val _isLoadingArchiveTracks = MutableStateFlow(false)
+    val isLoadingArchiveTracks: StateFlow<Boolean> = _isLoadingArchiveTracks.asStateFlow()
+
+    fun loadArchiveTracks(identifier: String) {
+        viewModelScope.launch {
+            _isLoadingArchiveTracks.value = true
+            _archiveTracks.value = archiveRepository.tracksForItem(identifier)
+            _isLoadingArchiveTracks.value = false
+        }
+    }
+
+    /** Odtwarza całą listę ścieżek itemu od [track], nie tylko tę jedną — jak album. */
+    fun onPlayArchiveTrack(track: ArchiveTrack, item: ArchiveItem, queue: List<ArchiveTrack> = listOf(track)) {
+        val startIndex = queue.indexOf(track).coerceAtLeast(0)
+        playerRepository.playQueue(queue.map { it.toTrack(item) }, startIndex)
+    }
+
+    // --- Muzyka niezależna (Jamendo) — DESIGN.md Etap 37 ---
+
+    private val _independentTracks = MutableStateFlow<List<IndependentTrack>>(emptyList())
+    val independentTracks: StateFlow<List<IndependentTrack>> = _independentTracks.asStateFlow()
+
+    private val _isLoadingIndependentMusic = MutableStateFlow(false)
+    val isLoadingIndependentMusic: StateFlow<Boolean> = _isLoadingIndependentMusic.asStateFlow()
+
+    fun loadTrendingIndependentMusic() {
+        viewModelScope.launch {
+            _isLoadingIndependentMusic.value = true
+            _independentTracks.value = independentMusicRepository.trending()
+            _isLoadingIndependentMusic.value = false
+        }
+    }
+
+    fun searchIndependentMusic(query: String) {
+        viewModelScope.launch {
+            _isLoadingIndependentMusic.value = true
+            _independentTracks.value = independentMusicRepository.search(query)
+            _isLoadingIndependentMusic.value = false
+        }
+    }
+
+    fun browseIndependentMusicByTag(tag: String) {
+        viewModelScope.launch {
+            _isLoadingIndependentMusic.value = true
+            _independentTracks.value = independentMusicRepository.tracksByTag(tag)
+            _isLoadingIndependentMusic.value = false
+        }
+    }
+
+    /** Odtwarza całą przeglądaną listę od [track], nie tylko ten jeden utwór. */
+    fun onPlayIndependentTrack(track: IndependentTrack, queue: List<IndependentTrack> = listOf(track)) {
+        val startIndex = queue.indexOf(track).coerceAtLeast(0)
+        playerRepository.playQueue(queue.map { it.toTrack() }, startIndex)
     }
 }

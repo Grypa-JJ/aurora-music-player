@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Rozpoznanie apki jako źródła mediów przez Android Auto — patrz DESIGN.md sekcja 6. -->
+<automotiveApp>
+    <uses name="media" />
+</automotiveApp>

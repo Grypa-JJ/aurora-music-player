@@ -85,7 +85,19 @@ class AuroraBrowseTree @Inject constructor(
         mediaId == AuroraMediaIds.LIBRARY_ARTISTS -> folderItem(mediaId, "Wykonawcy")
         mediaId == AuroraMediaIds.PLAYLISTS_ROOT -> folderItem(mediaId, "Playlisty")
         mediaId == AuroraMediaIds.PODCASTS_ROOT -> folderItem(mediaId, "Podcasty")
-        else -> children(mediaId)?.let { folderItem(mediaId, mediaId) }
+        // Kafelki/liście muszą się rozwiązywać na TEN SAM MediaItem co w listach ich rodzica —
+        // poprzednia wersja delegowała do children(mediaId), które rozwiązuje tylko rodziców, więc
+        // każdy prawdziwy utwór/miks/album/playlista/podcast dostawał tu RESULT_ERROR_BAD_VALUE
+        // albo (dla folderów) kafelek z tytułem = surowe, zakodowane mediaId.
+        mediaId.startsWith(AuroraMediaIds.GENIUS_MIX_PREFIX) -> geniusChildren().find { it.mediaId == mediaId }
+        mediaId.startsWith(AuroraMediaIds.LIBRARY_ALBUM_PREFIX) -> albumItems().find { it.mediaId == mediaId }
+        mediaId.startsWith(AuroraMediaIds.LIBRARY_ARTIST_PREFIX) -> artistItems().find { it.mediaId == mediaId }
+        mediaId.startsWith(AuroraMediaIds.PLAYLIST_PREFIX) -> playlistItems().find { it.mediaId == mediaId }
+        mediaId.startsWith(AuroraMediaIds.PODCAST_PREFIX) -> podcastItems().find { it.mediaId == mediaId }
+        // Odcinek podkastu wymagałby przeszukania RSS wszystkich subskrypcji (drogie) — świadomie
+        // pominięte, dopóki nic realnie nie wywołuje onGetItem na pojedynczym odcinku.
+        mediaId.startsWith(AuroraMediaIds.PODCAST_EPISODE_PREFIX) -> null
+        else -> trackRepository.getAllTracks().find { it.id.toString() == mediaId }?.toMediaItem()
     }
 
     /** `null` = nieznany rodzic (błąd), pusta lista = znany, ale bez zawartości. */

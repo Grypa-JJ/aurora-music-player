@@ -2,6 +2,8 @@ package com.aurora.player.data.database
 
 import androidx.room.Database
 import androidx.room.RoomDatabase
+import com.aurora.player.data.database.dao.AudiobookDao
+import com.aurora.player.data.database.dao.EqStateDao
 import com.aurora.player.data.database.dao.FavoriteTrackDao
 import com.aurora.player.data.database.dao.LyricsCacheDao
 import com.aurora.player.data.database.dao.PlayEventDao
@@ -12,6 +14,9 @@ import com.aurora.player.data.database.dao.TrackAffinityDao
 import com.aurora.player.data.database.dao.TrackAudioMetadataDao
 import com.aurora.player.data.database.dao.TrackCooccurrenceDao
 import com.aurora.player.data.database.dao.TrackMetadataOverrideDao
+import com.aurora.player.data.database.entity.AudiobookEntity
+import com.aurora.player.data.database.entity.AudiobookPlaybackPositionEntity
+import com.aurora.player.data.database.entity.EqStateEntity
 import com.aurora.player.data.database.entity.FavoriteTrackEntity
 import com.aurora.player.data.database.entity.LyricsCacheEntity
 import com.aurora.player.data.database.entity.PlayEventEntity
@@ -43,6 +48,12 @@ import com.aurora.player.data.database.entity.TrackMetadataOverrideEntity
  * pierwsza tabela w tym pliku, której utrata przy destrukcyjnej migracji faktycznie boli. Zostaje
  * mimo to na `fallbackToDestructiveMigration` na tym wczesnym etapie (spójność z resztą appki),
  * ale to już świadomy koszt, nie "nic się nie stanie" jak przy poprzednich tabelach.
+ * Etap 38: `EqStateEntity` — trwały zapis equalizera (Etap 20d, wcześniej zapowiedziane w
+ * EqRepositoryImpl jako "dojdzie razem z tabelami Genius", nigdy nie zrobione). Odtwarzalny
+ * (user może sobie ustawić EQ od nowa) — ta sama zasada co reszta tabel.
+ * Etap 37: `AudiobookEntity`/`AudiobookPlaybackPositionEntity` — biblioteka audiobooków LibriVox,
+ * ten sam kształt i te same zasady co tabele podkastów (subskrypcja NIE jest odtwarzalna z sieci,
+ * pozycja odtwarzania jest kluczowa przy wielogodzinnych książkach).
  */
 @Database(
     entities = [
@@ -58,8 +69,11 @@ import com.aurora.player.data.database.entity.TrackMetadataOverrideEntity
         TrackAudioMetadataEntity::class,
         PodcastSubscriptionEntity::class,
         PodcastPlaybackPositionEntity::class,
+        EqStateEntity::class,
+        AudiobookEntity::class,
+        AudiobookPlaybackPositionEntity::class,
     ],
-    version = 9,
+    version = 11,
     exportSchema = false,
 )
 abstract class AuroraDatabase : RoomDatabase() {
@@ -73,4 +87,6 @@ abstract class AuroraDatabase : RoomDatabase() {
     abstract fun trackMetadataOverrideDao(): TrackMetadataOverrideDao
     abstract fun trackAudioMetadataDao(): TrackAudioMetadataDao
     abstract fun podcastDao(): PodcastDao
+    abstract fun eqStateDao(): EqStateDao
+    abstract fun audiobookDao(): AudiobookDao
 }
