@@ -719,18 +719,23 @@ class LibraryViewModel @Inject constructor(
      * "Dla Ciebie" na Home — patrz KDoc [ArchiveRepository.personalizedForYou] dla algorytmu.
      * Brak lokalnej biblioteki = brak sygnału, wtedy zamiast personalizacji pokazujemy top popularne
      * (patrz [ArchiveRepository.topPopular]).
+     *
+     * Zgłoszenie: sam fakt, że `topArtists`/`topGenres` NIE są puste, nie znaczy jeszcze realnego
+     * dopasowania — biblioteka usera to zwykle mainstreamowi wykonawcy (Eminem/Metallica...), których
+     * na Internet Archive (etree/netlabels) po prostu nie ma, więc `personalizedForYou` mogło wrócić
+     * pustą listę mimo mocnego sygnału gustu. `.ifEmpty { topPopular() }` (ten sam wzorzec co
+     * [browseArchiveCategory]) łapie ten przypadek zamiast pokazać pustą sekcję.
      */
     fun loadPersonalizedArchive() {
         viewModelScope.launch {
             val (topArtists, topGenres) = computeLocalTaste()
-            if (topArtists.isEmpty() && topGenres.isEmpty()) {
-                _isLoadingArchive.value = true
-                _archiveItems.value = archiveRepository.topPopular()
-                _isLoadingArchive.value = false
-                return@launch
-            }
             _isLoadingArchive.value = true
-            _archiveItems.value = archiveRepository.personalizedForYou(topArtists, topGenres)
+            val personalized = if (topArtists.isNotEmpty() || topGenres.isNotEmpty()) {
+                archiveRepository.personalizedForYou(topArtists, topGenres)
+            } else {
+                emptyList()
+            }
+            _archiveItems.value = personalized.ifEmpty { archiveRepository.topPopular() }
             _isLoadingArchive.value = false
         }
     }

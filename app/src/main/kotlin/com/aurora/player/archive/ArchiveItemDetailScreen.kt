@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.AddToQueue
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Downloading
+import androidx.compose.material.icons.filled.OfflinePin
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -100,6 +101,37 @@ fun ArchiveItemDetailScreen(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f).padding(start = tokens.spacing.xs),
                 )
+                // Zgłoszenie: pobieranie utworów jeden po jednym z menu "..." to dużo klikania przy
+                // albumie/koncercie z kilkudziesięcioma ścieżkami — jeden przycisk pobiera od razu
+                // wszystkie, które jeszcze nie są w bibliotece (per-ścieżkowy dedup i tak już jest w
+                // `addTrackToLibrary`, więc bezpiecznie wywołać go dla całej listy naraz).
+                if (item != null && tracks.size > 1) {
+                    val trackIds = remember(tracks, item) { tracks.map { it.toTrack(item).id } }
+                    val allDownloaded = trackIds.all { it in libraryTrackIds }
+                    val anyDownloading = trackIds.any { it in downloadingTrackIds }
+                    Icon(
+                        imageVector = when {
+                            anyDownloading -> Icons.Filled.Downloading
+                            allDownloaded -> Icons.Filled.OfflinePin
+                            else -> Icons.Filled.Download
+                        },
+                        contentDescription = if (allDownloaded) "Cały album pobrany" else "Pobierz cały album",
+                        tint = if (allDownloaded) {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+                        } else {
+                            MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+                        },
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clickable(enabled = !allDownloaded && !anyDownloading) {
+                                tracks.forEachIndexed { index, track ->
+                                    if (trackIds[index] !in libraryTrackIds) {
+                                        viewModel.onAddArchiveTrackToLibrary(track, item)
+                                    }
+                                }
+                            },
+                    )
+                }
             }
 
             when {

@@ -249,8 +249,8 @@ class ArchiveRepositoryImpl @Inject constructor(
             )
         }
 
-        val genreMatches = favoriteGenres.take(MAX_TASTE_GENRES).flatMap { genre ->
-            val collectionQuery = collectionsForGenre(genre).joinToString(" OR ") { "collection:$it" }
+        val genreMatches = favoriteGenres.take(MAX_TASTE_GENRES).mapNotNull { collectionsForGenre(it) }.flatMap {
+            val collectionQuery = it.joinToString(" OR ") { collection -> "collection:$collection" }
             fetchItems(
                 query = "($collectionQuery) AND mediatype:audio",
                 limit = PER_QUERY_LIMIT,
@@ -282,8 +282,8 @@ class ArchiveRepositoryImpl @Inject constructor(
         // Mapa gatunek→kolekcja jest muzyczna (patrz GENRE_TO_COLLECTIONS) — dla innych kategorii
         // (Podcasty/Audiobooki/Radio) dopasowanie po gatunku nic by nie znaczyło.
         val genreMatches = if (category == ArchiveCategory.MUSIC) {
-            favoriteGenres.take(MAX_TASTE_GENRES).flatMap { genre ->
-                val collectionQuery = collectionsForGenre(genre).joinToString(" OR ") { "collection:$it" }
+            favoriteGenres.take(MAX_TASTE_GENRES).mapNotNull { collectionsForGenre(it) }.flatMap {
+                val collectionQuery = it.joinToString(" OR ") { collection -> "collection:$collection" }
                 fetchItems(
                     query = "($collectionQuery) AND mediatype:audio",
                     limit = PER_QUERY_LIMIT,
@@ -297,10 +297,17 @@ class ArchiveRepositoryImpl @Inject constructor(
         (artistMatches + genreMatches).distinctBy { it.identifier }.take(limit)
     }
 
-    private fun collectionsForGenre(genre: String): List<String> {
+    /**
+     * `null` = gatunek nie pasuje do żadnego znanego słowa kluczowego — zgłoszenie: wcześniejszy
+     * fallback na `netlabels` sprawiał, że "personalizacja" dla usera z mainstreamową biblioteką
+     * (Eminem/Metallica/Linkin Park — nic z tego nie ma szans trafić w etree/netlabels) zawsze
+     * cichcem zwracała ten sam generyczny browse netlabels, wyglądający jak dopasowanie, a
+     * faktycznie z niczym niepowiązany. `null` pozwala wywołującemu (patrz `personalizedForYou`)
+     * pominąć taki gatunek zamiast doklejać fałszywy sygnał.
+     */
+    private fun collectionsForGenre(genre: String): List<String>? {
         val normalized = genre.lowercase()
         return GENRE_TO_COLLECTIONS.entries.firstOrNull { (keyword, _) -> normalized.contains(keyword) }?.value
-            ?: DEFAULT_GENRE_COLLECTIONS
     }
 
     private fun fetchItems(query: String, limit: Int, sort: String?): List<ArchiveItem> {
@@ -468,8 +475,5 @@ class ArchiveRepositoryImpl @Inject constructor(
             "country" to listOf("etree"),
             "bluegrass" to listOf("etree"),
         )
-
-        /** Gatunek bez dopasowania — netlabele jako bezpieczny, WSPÓŁCZESNY domyślny wybór. */
-        val DEFAULT_GENRE_COLLECTIONS = listOf("netlabels")
     }
 }
