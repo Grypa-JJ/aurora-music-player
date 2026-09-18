@@ -2,6 +2,8 @@ package com.aurora.player.data.database
 
 import androidx.room.Database
 import androidx.room.RoomDatabase
+import com.aurora.player.data.database.dao.ArchiveLibraryDao
+import com.aurora.player.data.database.dao.ArtistInfoDao
 import com.aurora.player.data.database.dao.AudiobookDao
 import com.aurora.player.data.database.dao.EqStateDao
 import com.aurora.player.data.database.dao.FavoriteTrackDao
@@ -14,6 +16,8 @@ import com.aurora.player.data.database.dao.TrackAffinityDao
 import com.aurora.player.data.database.dao.TrackAudioMetadataDao
 import com.aurora.player.data.database.dao.TrackCooccurrenceDao
 import com.aurora.player.data.database.dao.TrackMetadataOverrideDao
+import com.aurora.player.data.database.entity.ArchiveLibraryTrackEntity
+import com.aurora.player.data.database.entity.ArtistInfoEntity
 import com.aurora.player.data.database.entity.AudiobookEntity
 import com.aurora.player.data.database.entity.AudiobookPlaybackPositionEntity
 import com.aurora.player.data.database.entity.EqStateEntity
@@ -54,6 +58,12 @@ import com.aurora.player.data.database.entity.TrackMetadataOverrideEntity
  * Etap 37: `AudiobookEntity`/`AudiobookPlaybackPositionEntity` — biblioteka audiobooków LibriVox,
  * ten sam kształt i te same zasady co tabele podkastów (subskrypcja NIE jest odtwarzalna z sieci,
  * pozycja odtwarzania jest kluczowa przy wielogodzinnych książkach).
+ * Etap 40: `ArchiveLibraryTrackEntity` — ścieżki z Internet Archive pobrane NA STAŁE (offline) do
+ * biblioteki, nie tylko przesłuchane w streamingu. NIE jest odtwarzalna z sieci samym cache'em —
+ * strata tej tabeli to strata realnie pobranego pliku (patrz `localFileUri`), ten sam świadomy
+ * koszt `fallbackToDestructiveMigration` co subskrypcje podkastów/audiobooki wyżej.
+ * Etap 43: `ArtistInfoEntity` — cache bio/gatunku/grafiki z TheAudioDB per wykonawca. Odtwarzalny
+ * (appka sama dociągnie ponownie z sieci po utracie tabeli), ta sama zasada co reszta cache'y.
  */
 @Database(
     entities = [
@@ -72,8 +82,10 @@ import com.aurora.player.data.database.entity.TrackMetadataOverrideEntity
         EqStateEntity::class,
         AudiobookEntity::class,
         AudiobookPlaybackPositionEntity::class,
+        ArchiveLibraryTrackEntity::class,
+        ArtistInfoEntity::class,
     ],
-    version = 11,
+    version = 13,
     exportSchema = false,
 )
 abstract class AuroraDatabase : RoomDatabase() {
@@ -89,4 +101,6 @@ abstract class AuroraDatabase : RoomDatabase() {
     abstract fun podcastDao(): PodcastDao
     abstract fun eqStateDao(): EqStateDao
     abstract fun audiobookDao(): AudiobookDao
+    abstract fun archiveLibraryDao(): ArchiveLibraryDao
+    abstract fun artistInfoDao(): ArtistInfoDao
 }

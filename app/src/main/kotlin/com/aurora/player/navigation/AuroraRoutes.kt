@@ -36,6 +36,9 @@ internal const val ROUTE_ARCHIVE = "archive"
 internal const val ROUTE_ARCHIVE_ITEM_DETAIL = "archive_item_detail/{identifier}"
 internal const val ROUTE_INDEPENDENT_MUSIC = "independent_music"
 
+/** "Pobrane" — w trakcie pobierania + zapisane na stałe z Archiwum, patrz DownloadsScreen. */
+internal const val ROUTE_DOWNLOADS = "downloads"
+
 /** Trzy trasy hostowane przez [com.aurora.player.navigation.AuroraBottomNav] (Etap 39 — było
  *  cztery w Etapie 37, "Szukaj" przestała być osobną zakładką). */
 internal val BOTTOM_NAV_ROUTES = setOf(ROUTE_HOME, ROUTE_LIBRARY, ROUTE_DISCOVER)

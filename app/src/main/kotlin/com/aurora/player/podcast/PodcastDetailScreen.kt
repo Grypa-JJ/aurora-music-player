@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -38,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
+import com.aurora.player.domain.model.Podcast
 import com.aurora.player.domain.model.PodcastEpisode
 import com.aurora.player.library.LibraryViewModel
 import java.text.SimpleDateFormat
@@ -54,12 +56,24 @@ fun PodcastDetailScreen(
     modifier: Modifier = Modifier,
 ) {
     val subscriptions by viewModel.podcastSubscriptions.collectAsState()
+    val searchResults by viewModel.podcastSearchResults.collectAsState()
     val episodes by viewModel.podcastEpisodes.collectAsState()
     val isLoading by viewModel.isLoadingPodcastEpisodes.collectAsState()
     val playbackState by viewModel.playbackState.collectAsState()
     val tokens = LocalAuroraTokens.current
 
-    val podcast = remember(subscriptions, feedUrl) { subscriptions.find { it.feedUrl == feedUrl } }
+    val subscribedPodcast = remember(subscriptions, feedUrl) { subscriptions.find { it.feedUrl == feedUrl } }
+    // Karty "Podkasty dla Ciebie" na Home wołają ten ekran z feedUrl jeszcze NIEZASUBSKRYBOWANYM
+    // (to tylko propozycja z katalogu) — bez tego fallbacku każde takie kliknięcie pokazywało
+    // "Podcast nie jest już dostępny", bo szukaliśmy tylko wśród subskrypcji. `description` nie jest
+    // nigdzie renderowany na tym ekranie ani używany w [PodcastEpisode.toTrack], więc pusty string
+    // jest bezpieczny dla podglądu przed subskrypcją.
+    val podcast = remember(subscribedPodcast, searchResults, feedUrl) {
+        subscribedPodcast ?: searchResults.find { it.feedUrl == feedUrl }?.let {
+            Podcast(feedUrl = it.feedUrl, title = it.title, author = it.author, artworkUrl = it.artworkUrl, description = "")
+        }
+    }
+    val isSubscribed = subscribedPodcast != null
 
     LaunchedEffect(feedUrl) { viewModel.loadPodcastEpisodes(feedUrl) }
 
@@ -93,15 +107,26 @@ fun PodcastDetailScreen(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(start = tokens.spacing.xs),
             )
-            Icon(
-                imageVector = Icons.Filled.Delete,
-                contentDescription = "Odsubskrybuj",
-                tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                modifier = Modifier.padding(end = tokens.spacing.m).size(22.dp).clickable {
-                    viewModel.unsubscribeFromPodcast(feedUrl)
-                    onBack()
-                },
-            )
+            if (isSubscribed) {
+                Icon(
+                    imageVector = Icons.Filled.Delete,
+                    contentDescription = "Odsubskrybuj",
+                    tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(end = tokens.spacing.m).size(22.dp).clickable {
+                        viewModel.unsubscribeFromPodcast(feedUrl)
+                        onBack()
+                    },
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.LibraryAdd,
+                    contentDescription = "Subskrybuj",
+                    tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(end = tokens.spacing.m).size(22.dp).clickable {
+                        viewModel.subscribeToPodcast(feedUrl)
+                    },
+                )
+            }
         }
 
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s)) {
@@ -129,11 +154,24 @@ fun PodcastDetailScreen(
 
             episodes.isEmpty() -> {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(
-                        text = "Brak odcinków (albo feed chwilowo niedostępny).",
-                        style = AuroraTextStyles.Body,
-                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "Brak odcinków (albo feed chwilowo niedostępny).",
+                            style = AuroraTextStyles.Body,
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                        )
+                        // Duże feedy (np. JRE: ~5MB) czasem obrywają przejściowym błędem sieci przy
+                        // ściąganiu — bez tego przycisku jedyny sposób ponowienia to wyjście i
+                        // wejście z powrotem na ekran (LaunchedEffect(feedUrl) na nowej kompozycji).
+                        Text(
+                            text = "Spróbuj ponownie",
+                            style = AuroraTextStyles.Body,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .padding(top = tokens.spacing.m)
+                                .clickable { viewModel.loadPodcastEpisodes(feedUrl) },
+                        )
+                    }
                 }
             }
 

@@ -9,14 +9,17 @@ import com.aurora.player.cloud.GoogleDriveLibraryRepository
 import com.aurora.player.cloud.WebDavLibraryRepository
 import com.aurora.player.color.AlbumArtColorExtractor
 import com.aurora.player.color.AlbumArtPalette
-import com.aurora.player.domain.model.ArchiveCollections
+import com.aurora.player.domain.model.ArchiveCategory
+import com.aurora.player.domain.model.ArchiveDownload
 import com.aurora.player.domain.model.ArchiveItem
 import com.aurora.player.domain.model.ArchiveTrack
 import com.aurora.player.domain.model.Audiobook
 import com.aurora.player.domain.model.AudiobookChapter
 import com.aurora.player.domain.model.AudiobookSearchResult
 import com.aurora.player.domain.model.IndependentTrack
+import com.aurora.player.domain.model.ArtistInfo
 import com.aurora.player.domain.repository.ArchiveRepository
+import com.aurora.player.domain.repository.ArtistInfoRepository
 import com.aurora.player.domain.repository.AudiobookRepository
 import com.aurora.player.domain.repository.AudioMetadataRepository
 import com.aurora.player.domain.repository.IndependentMusicRepository
@@ -54,22 +57,34 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
 data class LibraryUiState(
     val tracks: List<Track> = emptyList(),
     val cloudTracks: List<Track> = emptyList(),
     val webDavTracks: List<Track> = emptyList(),
+    /** Ścieżki z Archiwum pobrane NA STAŁE do biblioteki (offline) — DESIGN.md Etap 40. */
+    val archiveLibraryTracks: List<Track> = emptyList(),
     val isLoading: Boolean = false,
     val isLoadingCloud: Boolean = false,
     val isLoadingWebDav: Boolean = false,
     val hasPermission: Boolean = false,
+    /**
+     * `true` po PIERWSZYM zakończonym skanie lokalnej biblioteki (patrz [LibraryViewModel.refresh])
+     * — niezależnie od tego, czy skan znalazł jakiekolwiek utwory. Odróżnia "jeszcze nie skończyło
+     * się skanować" od domyślnego `isLoading = false` sprzed startu skanu — bez tego pola
+     * personalizacja Archiwum (patrz `LibraryViewModel.computeLocalTaste`) nie miała jak poczekać na
+     * skan i zawsze widziała pustą listę, gdy Archiwum było otwierane od razu po starcie appki.
+     */
+    val localLibraryLoaded: Boolean = false,
 ) {
-    /** Biblioteka z urządzenia + z chmury + z NAS/WebDAV złączona w jedną listę do wyświetlenia. */
-    val allTracks: List<Track> get() = tracks + cloudTracks + webDavTracks
+    /** Biblioteka z urządzenia + z chmury + z NAS/WebDAV + z Archiwum złączona w jedną listę do wyświetlenia. */
+    val allTracks: List<Track> get() = tracks + cloudTracks + webDavTracks + archiveLibraryTracks
 }
 
 /** Ile razy mocniej ulubiony utwór liczy się w gustcie "Dla Ciebie" niż zwykła obecność w bibliotece. */
@@ -97,6 +112,7 @@ class LibraryViewModel @Inject constructor(
     private val audiobookRepository: AudiobookRepository,
     private val archiveRepository: ArchiveRepository,
     private val independentMusicRepository: IndependentMusicRepository,
+    private val artistInfoRepository: ArtistInfoRepository,
 ) : ViewModel() {
 
     val isCloudSignedIn: StateFlow<Boolean> = googleDriveLibraryRepository.isSignedIn
@@ -177,6 +193,14 @@ class LibraryViewModel @Inject constructor(
                     }
                 }
         }
+        // Ścieżki z Archiwum pobrane na stałe (Room, patrz ArchiveRepositoryImpl.library) — reaktywne,
+        // bez ręcznego refresh() jak Cloud/WebDAV niżej: wpis w bazie po pobraniu sam dopisuje się
+        // do allTracks, więc ulubione/playlisty/wyszukiwarka w Bibliotece widzą go natychmiast.
+        viewModelScope.launch {
+            archiveRepository.library.collect { tracks ->
+                _uiState.update { it.copy(archiveLibraryTracks = tracks) }
+            }
+        }
         // Sesja Google potrafi przetrwać restart appki (GoogleSignIn.getLastSignedInAccount) —
         // jeśli tak, dociągnij bibliotekę z chmury bez czekania na akcję użytkownika.
         if (isCloudSignedIn.value) refreshCloud()
@@ -194,17 +218,22 @@ class LibraryViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
             val tracks = getTracksUseCase()
-            _uiState.update { it.copy(tracks = tracks, isLoading = false) }
-            enrichMetadata(tracks)
+            _uiState.update { it.copy(tracks = tracks, isLoading = false, localLibraryLoaded = true) }
             extractAudioMetadata(tracks)
+            enrichMetadata(tracks)
         }
     }
 
     /**
-     * Naprawia błędne/brakujące tytuły, wykonawców i okładki w tle (MusicBrainz/Cover Art
-     * Archive, rate-limited ~1/s) — DESIGN.md Etap 25/27. Osobna korutyna: NIE opóźnia pierwszego
-     * wyświetlenia biblioteki powyżej, poszczególne utwory podmieniają się na liście w miarę jak
-     * dopasowania wracają.
+     * Naprawia błędne/brakujące tytuły, wykonawców i okładki w tle — DESIGN.md Etap 25/27/44.
+     * Okładka lokalna ([LocalAlbumArtRepository]) i sieciowa (MusicBrainz/Cover Art Archive) są
+     * teraz JEDNYM potokiem WEWNĄTRZ [MetadataEnrichmentRepository] (lokalnie per utwór przed
+     * siecią dla tego samego utworu) — nie dwoma niezależnymi przebiegami tutaj. Świadomie:
+     * dwie wcześniejsze próby tego rozdzielenia na poziomie ViewModelu (równolegle, potem
+     * sekwencyjnie-całą-biblioteką) dawały odpowiednio wyścig o `albumArtUri` i zauważalne
+     * opóźnienie całego wzbogacania — patrz komentarz w `MetadataEnrichmentRepositoryImpl`.
+     * Osobna korutyna od pierwszego wyświetlenia biblioteki wyżej: poszczególne utwory
+     * podmieniają się na liście w miarę jak dopasowania wracają.
      */
     private fun enrichMetadata(tracks: List<Track>) {
         viewModelScope.launch {
@@ -264,11 +293,16 @@ class LibraryViewModel @Inject constructor(
         playerRepository.playQueue(tracks, startIndex)
     }
 
-    /** Instant Mix z utworu-ziarna — patrz DESIGN.md sekcja 5.3. Seed gra jako pierwszy. */
+    /**
+     * Instant Mix z utworu-ziarna — patrz DESIGN.md sekcja 5.3. Seed gra jako pierwszy.
+     * `uiState.value.allTracks` (nie samo `TrackRepository.getAllTracks()`, patrz DESIGN.md
+     * Etap 40) — inaczej Genius nie widziałby utworów z Drive/WebDAV/pobranych z Archiwum, w tym
+     * SAMEGO seeda, gdyby akurat pochodził z jednego z tych źródeł.
+     */
     fun onGeniusClick(seedTrack: Track) {
         viewModelScope.launch {
             _isGeneratingMix.value = true
-            val mix = geniusRepository.generateInstantMix(seedTrack.id)
+            val mix = geniusRepository.generateInstantMix(seedTrack.id, _uiState.value.allTracks)
             _isGeneratingMix.value = false
             playerRepository.playQueue(listOf(seedTrack) + mix)
         }
@@ -294,7 +328,7 @@ class LibraryViewModel @Inject constructor(
     fun loadGeniusMixes() {
         viewModelScope.launch {
             _isLoadingMixes.value = true
-            _geniusMixes.value = geniusRepository.generateGeniusMixes()
+            _geniusMixes.value = geniusRepository.generateGeniusMixes(_uiState.value.allTracks)
             _isLoadingMixes.value = false
         }
     }
@@ -466,6 +500,22 @@ class LibraryViewModel @Inject constructor(
         viewModelScope.launch { podcastRepository.unsubscribe(feedUrl) }
     }
 
+    private val _artistInfo = MutableStateFlow<ArtistInfo?>(null)
+    val artistInfo: StateFlow<ArtistInfo?> = _artistInfo.asStateFlow()
+
+    private val _isLoadingArtistInfo = MutableStateFlow(false)
+    val isLoadingArtistInfo: StateFlow<Boolean> = _isLoadingArtistInfo.asStateFlow()
+
+    /** Bio/gatunek/grafika wykonawcy z TheAudioDB — DESIGN.md Etap 43, ten sam wzorzec co [loadPodcastEpisodes]. */
+    fun loadArtistInfo(artistName: String) {
+        viewModelScope.launch {
+            _artistInfo.value = null
+            _isLoadingArtistInfo.value = true
+            _artistInfo.value = artistInfoRepository.getArtistInfo(artistName)
+            _isLoadingArtistInfo.value = false
+        }
+    }
+
     private val _podcastEpisodes = MutableStateFlow<List<PodcastEpisode>>(emptyList())
     val podcastEpisodes: StateFlow<List<PodcastEpisode>> = _podcastEpisodes.asStateFlow()
 
@@ -604,44 +654,79 @@ class LibraryViewModel @Inject constructor(
     private val _isLoadingArchive = MutableStateFlow(false)
     val isLoadingArchive: StateFlow<Boolean> = _isLoadingArchive.asStateFlow()
 
-    fun browseArchiveCollection(collection: String) {
+    /**
+     * Gust wyprowadzony z CAŁEJ lokalnej biblioteki (wykonawca + gatunek), z ulubionymi liczonymi
+     * [FAVORITE_TASTE_WEIGHT] razy mocniej niż zwykła obecność w bibliotece — tak cała zawartość
+     * urządzenia wpływa na dopasowanie, a ulubione wciąż dominują ranking. Współdzielone przez
+     * [loadPersonalizedArchive] (karuzela "Dla Ciebie" na Home) i [browseArchiveCategory]
+     * (przeglądanie konkretnej kategorii w Archiwum, DESIGN.md Etap 46).
+     *
+     * Tylko [TrackSource.LOCAL]: utwory z Google Drive/NAS-WebDAV mają w `Track.artist`/`Track.genre`
+     * placeholdery (nazwa usługi/konta, nie realne metadane odczytane z pliku) — wliczanie ich
+     * zaśmiecałoby gust, a w skrajnym przypadku wysłałoby e-mail konta Google jako `creator:` do
+     * publicznego wyszukiwania archive.org.
+     *
+     * Zgłoszenie: Archiwum otwarte od razu po starcie appki (bez wcześniejszego wejścia w
+     * Bibliotekę) dostawało zawsze "zahardcodowane" propozycje niezwiązane z muzyką na urządzeniu —
+     * skan MediaStore (`refresh()`) startuje teraz eagerly (patrz `AuroraNavHost`), ale to wciąż
+     * asynchroniczny odczyt dysku, a ten odczyt `_uiState.value` biegł RÓWNOLEGLE, nie PO nim.
+     * Czekamy więc (maks. 3s, żeby nie zawiesić się na zawsze przy braku uprawnienia) na
+     * [LibraryUiState.localLibraryLoaded], zanim w ogóle spojrzymy na `allTracks`.
+     */
+    private suspend fun computeLocalTaste(): Pair<List<String>, List<String>> {
+        if (!_uiState.value.localLibraryLoaded) {
+            withTimeoutOrNull(3_000) { uiState.first { it.localLibraryLoaded } }
+        }
+        val localTracks = _uiState.value.allTracks.filter { it.source == TrackSource.LOCAL }
+        val favoriteIds = favoritesRepository.favoriteTrackIds.value
+        val weighted = localTracks.flatMap { track ->
+            List(if (track.id in favoriteIds) FAVORITE_TASTE_WEIGHT else 1) { track }
+        }
+        val topArtists = weighted.map { it.artist }
+            .filter { it.isNotBlank() }
+            .groupingBy { it }.eachCount().entries
+            .sortedByDescending { it.value }.map { it.key }
+        val topGenres = weighted.mapNotNull { it.genre?.lowercase()?.trim() }
+            .filter { it.isNotBlank() }
+            .groupingBy { it }.eachCount().entries
+            .sortedByDescending { it.value }.map { it.key }
+        return topArtists to topGenres
+    }
+
+    /**
+     * Przeglądanie kategorii w Archiwum (zakładka Muzyka/Podkasty/Audiobooki/Radio) — Etap 46,
+     * zgłoszenie: wcześniej zawsze wołało dumny [ArchiveRepository.browseCategory] (sortowanie po
+     * dacie uploadu = głównie szum), teraz najpierw próbuje dopasowania do lokalnego gustu przez
+     * [ArchiveRepository.personalizedForCategory] — ten sam sygnał co karuzela "Dla Ciebie", tylko
+     * zawężony do tapniętej kategorii. Brak sygnału (świeża instalacja, pusta biblioteka lokalna) =
+     * fallback na zwykłe [ArchiveRepository.browseCategory], teraz też posortowane po popularności.
+     */
+    fun browseArchiveCategory(category: ArchiveCategory) {
         viewModelScope.launch {
             _isLoadingArchive.value = true
-            _archiveItems.value = archiveRepository.browseCollection(collection)
+            val (topArtists, topGenres) = computeLocalTaste()
+            val personalized = if (topArtists.isNotEmpty() || topGenres.isNotEmpty()) {
+                archiveRepository.personalizedForCategory(category, topArtists, topGenres)
+            } else {
+                emptyList()
+            }
+            _archiveItems.value = personalized.ifEmpty { archiveRepository.browseCategory(category) }
             _isLoadingArchive.value = false
         }
     }
 
     /**
-     * "Dla Ciebie" — gust wyprowadzony z CAŁEJ lokalnej biblioteki (wykonawca + gatunek), z ulubionymi
-     * liczonymi [FAVORITE_TASTE_WEIGHT] razy mocniej niż zwykła obecność w bibliotece — tak cała
-     * zawartość urządzenia wpływa na dopasowanie, a ulubione wciąż dominują ranking. Patrz KDoc
-     * [ArchiveRepository.personalizedForYou] dla dalszej części algorytmu.
-     *
-     * Tylko [TrackSource.LOCAL]: utwory z Google Drive/NAS-WebDAV mają w `Track.artist`/`Track.genre`
-     * placeholdery (nazwa usługi/konta, nie realne metadane odczytane z pliku) — wliczanie ich
-     * zaśmiecałoby gust, a w skrajnym przypadku wysłałoby e-mail konta Google jako `creator:` do
-     * publicznego wyszukiwania archive.org. Brak lokalnej biblioteki = brak sygnału, wywołujący
-     * (ArchiveScreen) powinien wtedy pokazać zwykłe [browseArchiveCollection].
+     * "Dla Ciebie" na Home — patrz KDoc [ArchiveRepository.personalizedForYou] dla algorytmu.
+     * Brak lokalnej biblioteki = brak sygnału, wtedy zamiast personalizacji pokazujemy top popularne
+     * (patrz [ArchiveRepository.topPopular]).
      */
     fun loadPersonalizedArchive() {
         viewModelScope.launch {
-            val localTracks = _uiState.value.allTracks.filter { it.source == TrackSource.LOCAL }
-            val favoriteIds = favoritesRepository.favoriteTrackIds.value
-            val weighted = localTracks.flatMap { track ->
-                List(if (track.id in favoriteIds) FAVORITE_TASTE_WEIGHT else 1) { track }
-            }
-            val topArtists = weighted.map { it.artist }
-                .filter { it.isNotBlank() }
-                .groupingBy { it }.eachCount().entries
-                .sortedByDescending { it.value }.map { it.key }
-            val topGenres = weighted.mapNotNull { it.genre?.lowercase()?.trim() }
-                .filter { it.isNotBlank() }
-                .groupingBy { it }.eachCount().entries
-                .sortedByDescending { it.value }.map { it.key }
-
+            val (topArtists, topGenres) = computeLocalTaste()
             if (topArtists.isEmpty() && topGenres.isEmpty()) {
-                browseArchiveCollection(ArchiveCollections.LIVE_MUSIC)
+                _isLoadingArchive.value = true
+                _archiveItems.value = archiveRepository.topPopular()
+                _isLoadingArchive.value = false
                 return@launch
             }
             _isLoadingArchive.value = true
@@ -650,10 +735,10 @@ class LibraryViewModel @Inject constructor(
         }
     }
 
-    fun searchArchive(query: String) {
+    fun searchArchive(query: String, category: ArchiveCategory? = null) {
         viewModelScope.launch {
             _isLoadingArchive.value = true
-            _archiveItems.value = archiveRepository.search(query)
+            _archiveItems.value = archiveRepository.search(query, category)
             _isLoadingArchive.value = false
         }
     }
@@ -676,6 +761,30 @@ class LibraryViewModel @Inject constructor(
     fun onPlayArchiveTrack(track: ArchiveTrack, item: ArchiveItem, queue: List<ArchiveTrack> = listOf(track)) {
         val startIndex = queue.indexOf(track).coerceAtLeast(0)
         playerRepository.playQueue(queue.map { it.toTrack(item) }, startIndex)
+    }
+
+    /** Ścieżki z Archiwum pobrane na stałe do biblioteki — do sprawdzenia stanu "już dodane" w UI. */
+    val archiveLibraryTracks: StateFlow<List<Track>> = archiveRepository.library
+
+    /** `Track.id` ścieżek aktualnie pobieranych z archive.org — do spinnera przy wierszu. */
+    val archiveDownloadingTrackIds: StateFlow<Set<Long>> = archiveRepository.downloadingTrackIds
+
+    /** Jak [archiveDownloadingTrackIds], ale z tytułem/okładką — do ekranu "Pobrane". */
+    val archiveActiveDownloads: StateFlow<List<ArchiveDownload>> = archiveRepository.activeDownloads
+
+    val archiveLastError: StateFlow<String?> = archiveRepository.lastError
+    fun clearArchiveError() = archiveRepository.clearLastError()
+
+    /**
+     * Pobiera ścieżkę na stałe do biblioteki (archive.org → dysk urządzenia) — odtąd odtwarzalna
+     * offline jak lokalny plik, a nie tylko streamowana. Patrz [ArchiveRepository.addTrackToLibrary].
+     */
+    fun onAddArchiveTrackToLibrary(track: ArchiveTrack, item: ArchiveItem) {
+        viewModelScope.launch { archiveRepository.addTrackToLibrary(track, item) }
+    }
+
+    fun onRemoveArchiveTrackFromLibrary(trackId: Long) {
+        viewModelScope.launch { archiveRepository.removeTrackFromLibrary(trackId) }
     }
 
     // --- Muzyka niezależna (Jamendo) — DESIGN.md Etap 37 ---

@@ -1,6 +1,8 @@
 package com.aurora.player.di
 
+import com.aurora.player.domain.repository.ArtistInfoRepository
 import com.aurora.player.domain.repository.MetadataEnrichmentRepository
+import com.aurora.player.metadata.ArtistInfoRepositoryImpl
 import com.aurora.player.metadata.MetadataEnrichmentRepositoryImpl
 import dagger.Binds
 import dagger.Module
@@ -14,4 +16,7 @@ abstract class MetadataEnrichmentModule {
     abstract fun bindMetadataEnrichmentRepository(
         impl: MetadataEnrichmentRepositoryImpl,
     ): MetadataEnrichmentRepository
+
+    @Binds
+    abstract fun bindArtistInfoRepository(impl: ArtistInfoRepositoryImpl): ArtistInfoRepository
 }

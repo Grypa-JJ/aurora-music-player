@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
+import com.aurora.player.desktop.discord.DiscordRpcClient
 import com.aurora.player.domain.model.Track
 import com.aurora.player.domain.model.TrackSource
 import com.aurora.player.domain.util.TrackIdHasher
@@ -84,6 +85,9 @@ private fun AuroraDesktopApp() {
     var positionMs by remember { mutableStateOf(0L) }
     var durationMs by remember { mutableStateOf(0L) }
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
+    // Etap 48: status "Słucha Aurora: [utwór]" w Discordzie (RPC lokalny, wymaga Discorda na
+    // tym samym komputerze). Feature no-opuje się samodzielnie, gdy brak AURORA_DISCORD_CLIENT_ID.
+    val discordRpc = remember { DiscordRpcClient.create() }
 
     fun disposeCurrentPlayer() {
         player?.stop()
@@ -100,16 +104,26 @@ private fun AuroraDesktopApp() {
         newPlayer.setOnReady { durationMs = media.duration.toMillis().toLong() }
         newPlayer.currentTimeProperty().addListener { _, _, newValue -> positionMs = newValue.toMillis().toLong() }
         newPlayer.setOnEndOfMedia {
-            if (index + 1 in tracks.indices) playIndex(index + 1) else isPlaying = false
+            if (index + 1 in tracks.indices) {
+                playIndex(index + 1)
+            } else {
+                isPlaying = false
+                discordRpc?.clear()
+            }
         }
         newPlayer.play()
         player = newPlayer
         currentIndex = index
         isPlaying = true
+        discordRpc?.setNowPlaying(track.title, track.artist, isPlaying = true, positionMs = 0L)
     }
 
     DisposableEffect(Unit) {
-        onDispose { disposeCurrentPlayer() }
+        discordRpc?.start()
+        onDispose {
+            disposeCurrentPlayer()
+            discordRpc?.close()
+        }
     }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -138,6 +152,7 @@ private fun AuroraDesktopApp() {
                             currentIndex = -1
                             disposeCurrentPlayer()
                             isPlaying = false
+                            discordRpc?.clear()
                         }
                     }) {
                         Icon(Icons.Filled.Folder, contentDescription = "Wybierz folder")
@@ -173,7 +188,11 @@ private fun AuroraDesktopApp() {
                     Slider(
                         value = if (durationMs > 0) positionMs.toFloat() / durationMs else 0f,
                         onValueChange = { fraction ->
-                            player?.seek(FxDuration.millis((fraction * durationMs).toDouble()))
+                            val seekMs = (fraction * durationMs).toDouble()
+                            player?.seek(FxDuration.millis(seekMs))
+                            if (isPlaying) {
+                                discordRpc?.setNowPlaying(track.title, track.artist, isPlaying = true, positionMs = seekMs.toLong())
+                            }
                         },
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -190,6 +209,7 @@ private fun AuroraDesktopApp() {
                             val current = player ?: return@IconButton
                             if (isPlaying) current.pause() else current.play()
                             isPlaying = !isPlaying
+                            discordRpc?.setNowPlaying(track.title, track.artist, isPlaying = isPlaying, positionMs = positionMs)
                         }) {
                             Icon(
                                 if (isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,

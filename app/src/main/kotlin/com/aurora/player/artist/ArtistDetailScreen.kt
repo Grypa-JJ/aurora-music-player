@@ -8,12 +8,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AddToQueue
 import androidx.compose.material.icons.filled.Favorite
@@ -26,6 +28,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,8 +36,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import coil3.compose.AsyncImage
 import com.aurora.player.designsystem.components.TrackAction
 import com.aurora.player.designsystem.components.TrackActionsSheet
 import com.aurora.player.designsystem.components.TrackListItem
@@ -49,9 +55,11 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Widok wszystkich utworów jednego wykonawcy — DESIGN.md Etap 22/23. Świadomie płaska lista
- * (nie grupowana per album) — Spotify-owy "widok wykonawcy" z bio/top utworami/dyskografią to
- * dużo większy koszt niż ten ekran daje wartości na obecnym etapie appki; "wszystkie utwory X"
- * to sedno tego, po co ktoś w ogóle wchodzi w wykonawcę.
+ * (nie grupowana per album) — "wszystkie utwory X" to sedno tego, po co ktoś w ogóle wchodzi w
+ * wykonawcę. Etap 43: banner/bio/gatunek dociągnięte z TheAudioDB dołożone NAD tą listą (opcjonalny
+ * nagłówek, znika bez śladu gdy TheAudioDB nic nie znajdzie) — pełny ekran "à la Spotify" z
+ * dyskografią to wciąż większy koszt niż wartość na obecnym etapie appki, ale samo bio/gatunek
+ * było tanie dołożyć do już istniejącego ekranu.
  */
 @Composable
 fun ArtistDetailScreen(
@@ -64,7 +72,10 @@ fun ArtistDetailScreen(
     val playbackState by viewModel.playbackState.collectAsState()
     val favoriteTrackIds by viewModel.favoriteTrackIds.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
+    val artistInfo by viewModel.artistInfo.collectAsState()
     val tokens = LocalAuroraTokens.current
+
+    LaunchedEffect(artistName) { viewModel.loadArtistInfo(artistName) }
 
     val artist = remember(uiState.allTracks, artistName) {
         groupTracksByArtist(uiState.allTracks).find { it.name == artistName }
@@ -102,6 +113,52 @@ fun ArtistDetailScreen(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(start = tokens.spacing.xs),
+            )
+        }
+
+        artistInfo?.bannerUrl?.let { bannerUrl ->
+            AsyncImage(
+                model = bannerUrl,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = tokens.spacing.m)
+                    .height(100.dp)
+                    .clip(RoundedCornerShape(12.dp)),
+            )
+        }
+
+        val tags = listOfNotNull(artistInfo?.genre, artistInfo?.style, artistInfo?.mood).distinct()
+        if (tags.isNotEmpty()) {
+            Text(
+                text = tags.joinToString(" • "),
+                style = AuroraTextStyles.Label,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.xs),
+            )
+        }
+
+        artistInfo?.biography?.let { biography ->
+            var isBiographyExpanded by remember(artistName) { mutableStateOf(false) }
+            Text(
+                text = biography,
+                style = AuroraTextStyles.Body,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
+                maxLines = if (isBiographyExpanded) Int.MAX_VALUE else 4,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.xs)
+                    .clickable { isBiographyExpanded = !isBiographyExpanded },
+            )
+            Text(
+                text = if (isBiographyExpanded) "Pokaż mniej" else "Pokaż więcej",
+                style = AuroraTextStyles.Label,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .padding(horizontal = tokens.spacing.m)
+                    .clickable { isBiographyExpanded = !isBiographyExpanded },
             )
         }
 

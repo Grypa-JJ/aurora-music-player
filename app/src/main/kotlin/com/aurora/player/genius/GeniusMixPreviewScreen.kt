@@ -42,6 +42,7 @@ import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
 import com.aurora.player.domain.model.TrackSource
 import com.aurora.player.library.LibraryViewModel
+import com.aurora.player.navigation.LocalBottomChromeInset
 import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
 
@@ -143,9 +144,13 @@ fun GeniusMixPreviewScreen(
             }
         }
 
+        // Etap 40, zgłoszenie: bez `LocalBottomChromeInset` Snackbar chował się pod pływającym
+        // mini-playerem/nawigacją (patrz ten sam fix w ArchiveItemDetailScreen/LibraryScreen).
         SnackbarHost(
             hostState = snackbarHostState,
-            modifier = Modifier.align(Alignment.BottomCenter).padding(tokens.spacing.m),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = LocalBottomChromeInset.current + tokens.spacing.m, start = tokens.spacing.m, end = tokens.spacing.m),
         ) { data -> Snackbar(snackbarData = data) }
     }
 }

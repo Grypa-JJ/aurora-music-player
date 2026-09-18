@@ -42,6 +42,9 @@ dependencies {
     implementation(compose.components.resources)
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.9.0")
+    // Etap 48: ramki Discord IPC (Rich Presence) — na Androidzie org.json przychodzi z android.jar,
+    // tu jest to czysty JVM więc trzeba go dociągnąć jawnie.
+    implementation("org.json:json:20240303")
 }
 
 compose.desktop {

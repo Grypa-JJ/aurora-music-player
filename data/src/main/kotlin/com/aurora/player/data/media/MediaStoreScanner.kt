@@ -56,10 +56,6 @@ class MediaStoreScanner @Inject constructor(
                 val id = cursor.getLong(idCol)
                 val trackUri = ContentUris.withAppendedId(collection, id)
                 val albumId = cursor.getLong(albumIdCol)
-                val albumArtUri = ContentUris.withAppendedId(
-                    android.net.Uri.parse("content://media/external/audio/albumart"),
-                    albumId,
-                )
 
                 tracks += Track(
                     id = id,
@@ -71,7 +67,16 @@ class MediaStoreScanner @Inject constructor(
                     year = if (yearCol >= 0) cursor.getInt(yearCol).takeIf { it > 0 } else null,
                     durationMs = cursor.getLong(durationCol),
                     dateAddedMs = cursor.getLong(dateAddedCol) * 1000L,
-                    albumArtUri = albumArtUri.toString(),
+                    // Etap 42: NIE budujemy tu już starego `content://media/external/audio/
+                    // albumart/{id}` — od Androida 10 jest udokumentowanie zawodny (system UI ma
+                    // własną, bardziej odporną ścieżkę do tych samych danych, którą nasz Coil nie
+                    // dysponuje). `null` tutaj to świadomy sygnał: [LocalAlbumArtRepository]
+                    // dociąga realną okładkę w tle (`ContentResolver.loadThumbnail`, niezawodny
+                    // następca), zero blokowania tego skanu (patrz komentarz tam o wcześniejszej,
+                    // cofniętej próbie robienia tego SYNCHRONICZNIE w tej pętli — wieszała
+                    // ładowanie biblioteki).
+                    albumArtUri = null,
+                    albumId = albumId,
                 )
             }
         }

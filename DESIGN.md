@@ -1282,3 +1282,202 @@ Bez zmian: `LibraryScreen` (Biblioteka jako zakładka, z własną wyszukiwarką/
 - **Nowa sekcja "Audiobooki"** (ten sam wzorzec co Podkasty) — biblioteka (`audiobookLibrary`) jeśli user coś dodał, inaczej `loadRecommendedAudiobooks(Locale.getDefault().isO3Language)` → "Audiobooki dla Ciebie". Nowy callback `onOpenAudiobook` → `audiobook_detail/{id}` (ten sam route co `AudiobooksScreen`).
 - **Nowa sekcja "Radio"** — Radio nie ma koncepcji "biblioteki/zapisanych stacji" w tej appce, więc zawsze `loadTopRadioStations(countryCode)`; tap = `viewModel.onPlayRadioStation(station)` odtwarza OD RAZU (ten sam wzorzec co `RadioScreen`), bez ekranu szczegółów — bo radio nie ma "szczegółów", tylko strumień.
 - **Znalezione, ale NIE naprawione w tej rundzie**: dolny pasek nawigacji na `Aurora_Test` AVD renderuje się jako płaski półprzezroczysty scrim, NIE prawdziwy blur, mimo poprawnego okablowania (`hazeSource`/`hazeEffect`, identyczne jak istniejący `MiniPlayerBar`). `adb shell getprop ro.hardware.egl` → `emulation` (software EGL, nie prawdziwe GPU passthrough) — `RenderEffect`/`BlurEffect` (wymagane przez Haze na API 31+) typowo nie działa pod software-EGL, tylko na prawdziwym GPU. To zgodne z udokumentowaną w sekcji 2.4 appki degradacją (scrim jako zaprojektowany fallback), więc kod NIE jest zmieniany na podstawie tego jednego emulatora — **wymaga potwierdzenia na prawdziwym telefonie albo emulatorze z włączonym host GPU** zanim uznamy blur za faktycznie działający.
+
+## Etap 40: Archiwum — realne "dodaj do biblioteki" z pobieraniem offline
+
+*Źródło: user zauważył, że "dodawanie plików z archiwum do biblioteki prawie nie istnieje" — audyt potwierdził: `ArchiveScreen`/`ArchiveItemDetailScreen` miały WYŁĄCZNIE przeglądanie+odtwarzanie, `ArchiveRepository` nie miał ŻADNEJ metody zapisu, `TrackSource.ARCHIVE` nie był referencjonowany nigdzie poza własną definicją enuma, a ulubione/playlisty działają tylko na `LibraryUiState.allTracks` (lokalne+Drive+WebDAV), do którego ścieżki z Archiwum nigdy nie trafiały — nawet gdyby dodać im serduszko w UI, fizycznie nie mogłyby się zapisać. User doprecyzował zakres: dodanie utworu do biblioteki ma REALNIE pobrać plik audio na dysk, żeby grał offline, nie tylko zapamiętać link streamingu (jak zrobione wcześniej dla audiobooków/podcastów — subskrypcja bez pliku).*
+
+### Co zbudowano
+
+- **Nowa tabela `archive_library_tracks`** (`ArchiveLibraryTrackEntity`/`ArchiveLibraryDao`, baza 11→12, `fallbackToDestructiveMigration` — ten sam świadomy koszt co subskrypcje podkastów/audiobooki) — `trackId` to TEN SAM hash co `Track.id` budowany przez `TrackIdHasher` (dyskryminator `archive_org`, wydzielony do `internal fun archiveTrackId()` we wspólnym miejscu z `ArchiveTrackMapper.toTrack()`), żeby ta sama ścieżka miała identyczne id niezależnie, czy gra ze streamingu, czy z pliku pobranego na stałe — inaczej ulubione/playlisty (identyfikują utwór tylko po `Long`) zgubiłyby dopasowanie po pobraniu.
+- **`ArchiveRepositoryImpl.addTrackToLibrary()`** — realne pobranie przez OkHttp (`response.body.byteStream()` strumieniowane bezpośrednio na dysk, bez ładowania całego pliku do pamięci) do prywatnego magazynu appki (`context.filesDir/archive_library/{identifier}/`, NIE MediaStore — zero uprawnień do poproszenia usera). Wpis do Room dopiero PO udanym pobraniu. `downloadingTrackIds`/`lastError` jako `StateFlow` do spinnera/Snackbara w UI (ten sam wzorzec `lastError`/`clearLastError()` co `GoogleDriveLibraryRepository`/`WebDavLibraryRepository`). Guard przeciw duplikatom: no-op (zwraca `true`) gdy ścieżka już w bazie albo już się pobiera.
+- **`library: StateFlow<List<Track>>`** (Room `observeAll()` → mapowane na `Track` przez nowy `ArchiveLibraryTrackMapper`, `uri` = `file://...`) **dopięte do `LibraryUiState.allTracks`** w `LibraryViewModel` (kolejny człon obok `tracks`/`cloudTracks`/`webDavTracks`, reaktywnie w `init{}`, bez ręcznego `refresh()`) — to jest kluczowa decyzja architektoniczna tego etapu: pobrane ścieżki z Archiwum dołączają do TEJ SAMEJ listy co lokalna biblioteka/Drive/WebDAV, więc automatycznie stają się widoczne w głównym ekranie Biblioteki, przeszukiwalne, i mogą trafić do ulubionych/playlist (`FavoriteTrackDao`/playlisty przyjmują dowolny `Long` bez FK) BEZ ŻADNYCH zmian w tamtym kodzie. Rozważana alternatywa (osobna "biblioteka Archiwum" jak u audiobooków) odrzucona — user chciał integracji z resztą biblioteki, nie kolejnej wydzielonej zakładki.
+- **`ArchiveItemDetailScreen`**: menu "..." (`TrackListItem.onMoreClick` → `TrackActionsSheet`, ten sam komponent co Biblioteka/Ulubione) z trzema stanami per ścieżka — "Dodaj do biblioteki (pobierz na stałe)" / "Pobieranie…" (disabled, spinner) / "Usuń z biblioteki (offline)" — plus "Dodaj do kolejki". Snackbar błędów pobierania (`archiveLastError`, ten sam idiom `LaunchedEffect`+`showSnackbar`+`clearError()` co błędy Drive/WebDAV w `LibraryScreen`). Nowy parametr `TrackListItem.isSavedOffline` (małą plakietką `OfflinePin`, analogicznie do istniejącego `isCloudTrack`/`Cloud`) dopięty też w `LibraryScreen`/`FavoritesScreen`/`PlaylistDetailScreen`, żeby pobrane-na-stałe ścieżki z Archiwum były rozpoznawalne wszędzie, nie tylko na ekranie, gdzie je pobrano.
+- Zweryfikowane `./gradlew :domain:compileKotlin :data:compileDebugKotlin :core:designsystem:compileDebugKotlin :app:compileDebugKotlin` — `BUILD SUCCESSFUL`, zero nowych błędów/ostrzeżeń. **NIE zweryfikowane wizualnie na urządzeniu/emulatorze** (brak dostępu do `adb` w tej sesji) — realne pobieranie pliku, zapis na dysk i odtwarzanie z lokalnego `file://` przez `DefaultDataSource.Factory` w `PlaybackService` nie zostały przetestowane end-to-end na żywym urządzeniu.
+
+### Poprawka: Genius nie widział utworów spoza lokalnego skanu (ten sam Etap, druga runda)
+
+*Źródło: user zapytał wprost "czy genius mixes będzie używać tych piosenek?" o ścieżki pobrane z Archiwum. Audyt `GeniusRepositoryImpl` pokazał, że to głębszy, starszy problem niż samo Archiwum: Instant Mix i "Miksy Geniusa" od zawsze budowały się z `TrackRepository.getAllTracks()` — czystego skanu MediaStore — zupełnie innego, węższego źródła niż `LibraryViewModel.uiState.allTracks`, na którym opiera się Biblioteka/Ulubione/Playlisty. Utwory z Google Drive/WebDAV były więc niewidoczne dla Geniusa już od Etapu 12/22, długo przed Archiwum — user potwierdził "dokładnie tak trzeba zrobić" na propozycję naprawy.*
+
+- **`GeniusRepository` (domain) przestał sam dociągać kandydatów** — `generateInstantMix`/`generateGeniusMixes` dostają teraz `candidateTracks: List<Track>` jako parametr od wywołującego, zamiast wstrzykiwać `TrackRepository` i pytać go samodzielnie. `GeniusRepositoryImpl` (`:data`) stracił zależność od `TrackRepository` — czysty scoring/klastrowanie na tym, co dostanie.
+- **`LibraryViewModel`** (`onGeniusClick`/`loadGeniusMixes`) podaje `_uiState.value.allTracks` — TĘ SAMĄ zagregowaną listę (lokalne + Drive + WebDAV + pobrane z Archiwum), której już używają Ulubione/Playlisty/wyszukiwarka Biblioteki. Efekt: Instant Mix i Miksy Geniusa od teraz uwzględniają WSZYSTKIE odtwarzalne źródła, nie tylko pliki fizycznie zeskanowane z urządzenia — w tym utwór może teraz być ziarnem Instant Mixu, nawet jeśli sam pochodzi z Drive/WebDAV/Archiwum.
+- **Android Auto (`AuroraBrowseTree`) pierwotnie NIE dostał tej zmiany — user od razu to skorygował**: "ale pliki dostępne offline z archiwum jest lokalna" — słusznie, `trackRepository.getAllTracks()` (skan MediaStore) i `ArchiveRepository.library` (pliki pobrane na stałe do `filesDir`) to DWA różne źródła prawdziwie lokalnych, odtwarzalnych-bez-sieci plików, nie jedno kontra "zdalne". Naprawione: nowy `AuroraBrowseTree.localTracks() = trackRepository.getAllTracks() + archiveRepository.library.value`, użyty we WSZYSTKICH miejscach tego pliku, które wcześniej wołały `trackRepository.getAllTracks()` bezpośrednio (`item()`, `search()`, `geniusMixes()`, kafelek "Kontynuuj", Ulubione/Utwory/Albumy/Wykonawcy, rozwiązywanie utworów playlisty) — nie tylko w Geniusie, bo dokładnie ten sam bląd (utwór z Archiwum nieznaleziony po id) czekałby w playlistach/ulubionych/albumach w aucie. Google Drive/WebDAV ŚWIADOMIE zostają wykluczone z `localTracks()` — to jedyne dwa źródła w `LibraryViewModel.uiState.allTracks`, które realnie wymagają sieci przy KAŻDYM odtworzeniu, więc wykluczenie ich z offline-pierwszego przeglądania w aucie to nadal poprawna zasada, nie przeoczenie.
+- Zweryfikowane ponownie pełnym `./gradlew :domain:compileKotlin :data:compileDebugKotlin :core:designsystem:compileDebugKotlin :app:compileDebugKotlin` — `BUILD SUCCESSFUL`. Android Auto samego przeglądania nadal NIE dało się przetestować na żywo w tej sesji (brak `adb`/Desktop Head Unit) — jak w Etapie 38.
+
+### Świadomie NIE zrobione w tej rundzie
+
+Brak zbiorczego "pobierz cały koncert/sesję" (tylko pojedyncza ścieżka na raz) — świadomie odłożone, żeby nie mnożyć równoległych pobrań i ryzyka na pierwsze podejście; łatwe do dopisania później jako pętla po tej samej `addTrackToLibrary()`. Brak paska postępu pobierania (tylko binarny spinner "pobieranie/nie"), limitu miejsca na dysku, ani ekranu "zarządzaj pobranymi/zwolnij miejsce".
+
+## Etap 42: Biblioteka — jeden album rozpadał się na wiele + okładki widoczne tylko poza appką
+
+*Źródło: user, po realnym użyciu na telefonie — "czasem zdrza sie tak że piosenki z jednego albumu tworzą np 20 albumów z tą samą okładką zamiast jednego wspólnego" oraz "okładki [...] widoczne są w momencie blokady ekranu bądź na radiu w BT jak słucham w aucie, ale nie w aplikacji i tam gdzie powinny". Dwa niezależne bugi, oba w warstwie lokalnego skanu MediaStore.*
+
+### Bug 1: jeden album → wiele grup
+
+`groupTracksByAlbum` (`LibraryGrouping.kt`) klucował po parze (nazwa albumu, wykonawca) jako STRING. Tag wykonawcy potrafi się różnić utwór-od-utworu w obrębie tego samego, fizycznego albumu (features, niespójne tagowanie plików z różnych źródeł/ripów) — każda odmiana stringa dostawała własną grupę, mimo identycznej okładki i nazwy albumu. Naprawa: `MediaStore.Audio.Media.ALBUM_ID` był już odpytywany w `MediaStoreScanner` (budował tylko stary URI okładki, patrz Bug 2), ale nigdy nie trafiał do modelu `Track` ani do grupowania. Dodane: `Track.albumId: Long?` (tylko dla `TrackSource.LOCAL`), `groupTracksByAlbum` grupuje po nim gdy dostępny (autorytatywne, to system i tak już zdecydował przy skanowaniu), z fallbackiem na starą parę string dla źródeł bez odpowiednika MediaStore (chmura/WebDAV/radio/podkasty). Android Auto (`AuroraBrowseTree`) reużywa tej samej funkcji, więc dostaje poprawkę bez osobnej zmiany.
+
+### Bug 2: okładka widoczna w systemie, nie w appce
+
+Przyczyna: `MediaStoreScanner` budował dla KAŻDEGO lokalnego utworu stary `content://media/external/audio/albumart/{albumId}` — ten URI jest od Androida 10 (scoped storage) udokumentowanie zawodny: `ContentResolver.openInputStream` na nim (dokładnie to, czego używa Coil w naszych `AsyncImage`) coraz częściej dostaje `FileNotFoundException`/pustą odpowiedź na nowszych wersjach/OEM-ach, mimo że okładka fizycznie istnieje. System UI (ekran blokady, AVRCP w BT) ma do tych samych danych WŁASNĄ, dużo bardziej odporną ścieżkę wewnątrz frameworka — stąd rozjazd "widać wszędzie oprócz appki", nie przypadkowa usterka.
+
+Dodatkowy, ukryty efekt tego samego buga: appka i tak MA sieciowy fallback na brakujące okładki (`MetadataEnrichmentRepository`/Cover Art Archive, Etap 25/28), ale `TrackMetadataHeuristics.needsCoverArt(track) = track.albumArtUri == null` — a skoro stary URI ZAWSZE był ustawiony (nawet gdy w praktyce nic nie zwracał), ten fallback nigdy się nie uruchamiał dla dotkniętych utworów. Appka nie miała więc żadnej działającej ścieżki odzyskania.
+
+**Naprawa (i jej własna, poprawiona po drodze wersja)**: `ContentResolver.loadThumbnail()` (API 29+) — oficjalny następca starego URI, czyta miniaturę wprost z pliku utworu. Pierwsza wersja poprawki wołała to SYNCHRONICZNIE wewnątrz pętli skanującej `MediaStoreScanner.scanTracks()` — **złapane na żywo na emulatorze**: biblioteka przestała się w ogóle ładować (ekran startowy pusty w nieskończoność, bez crasha — `loadThumbnail` na syntetycznych plikach testowych blokował się na tyle długo, że cały skan nigdy się nie kończył). Poprawione na docelowy kształt: `MediaStoreScanner` zostaje szybki i nieblokujący jak wcześniej (`albumArtUri = null` dla lokalnych utworów przy samym skanie — to zresztą teraz POPRAWNIE uruchamia sieciowy fallback opisany wyżej), a rozwiązywanie miniatur przeniesione do nowego `LocalAlbumArtRepository` (`:data`), osobny, drugoplanowy `Flow<Track>` — dokładnie ten sam wzorzec co `MetadataEnrichmentRepository`/`AudioMetadataRepository` (Etap 25/29): pierwsze wyświetlenie biblioteki nie czeka, okładki "wskakują" pojedynczo w miarę jak się rozwiązują. Zabezpieczone `withTimeoutOrNull(3000ms)` na KAŻDE pojedyncze wywołanie `loadThumbnail` — nawet w tle błąd z pierwszej wersji nie mógłby się już powtórzyć. Wynik cache'owany raz na album (plik JPEG we własnym cache appki) — kolejne utwory tego samego albumu i kolejne uruchomienia appki trafiają w tani `File.exists()`, nie odtwarzają dekodowania. Poniżej API 29 appka świadomie nic nie próbuje lokalnie (ten zakres nie ma udokumentowanego problemu, ale i nie ma tu lepszej alternatywy niż stary URI) — `albumArtUri` zostaje `null`, sieciowy fallback i tak działa.
+
+### Zweryfikowane / NIE zweryfikowane
+
+**Zweryfikowane na emulatorze**: `:app:compileDebugKotlin`/`assembleDebug` czyste; biblioteka ładuje się poprawnie i szybko po poprawce (potwierdzone po złapaniu i naprawieniu zawieszenia pierwszej wersji); zakładka Albumy pokazuje osobne, poprawne karty (From Zero/Linkin Park, Greatest Hits/Metallica, Infinite/Eminem) bez duplikatów; okładki już wcześniej wzbogacone sieciowo nadal renderują się poprawnie. **NIE zweryfikowane na żywo**: dokładny, pierwotnie zgłoszony scenariusz (jeden album rozpadnięty na ~20 grup; okładka lokalna widoczna na blokadzie/BT ale nie w appce) — syntetyczna biblioteka testowa na emulatorze nie ma prawdziwych, wielotrackowych albumów z niespójnymi tagami ani prawdziwych wbudowanych okładek lokalnych (wszystkie widoczne tu okładki pochodzą z wcześniejszego sieciowego wzbogacenia, nie z `LocalAlbumArtRepository`), więc obu pierwotnych objawów nie da się fizycznie odtworzyć na tym zestawie danych. Poprawka celuje wprost w potwierdzone w kodzie przyczyny źródłowe (autorytatywny `ALBUM_ID` zamiast stringa; udokumentowanie zawodny legacy URI zamiast `loadThumbnail`), ale ostateczne potwierdzenie na rzeczywistej bibliotece usera — następny krok.
+
+### Dopisek: druga, subtelniejsza regresja z tej samej poprawki (złapana przez usera na żywo)
+
+User, po opisie powyższej poprawki: *"tylko okładki i wszystkie meta ktore sa pobierane mialy byc pobierane gdy nie istnieja, teraz sa podmieniane"*. Realna, trafna uwaga — druga, niezależna regresja wprowadzona TĄ SAMĄ poprawką (`MediaStoreScanner` teraz świadomie zwraca `albumArtUri = null` dla KAŻDEGO lokalnego utworu, nie tylko tych bez okładki):
+
+`LibraryViewModel.refresh()` odpalał `enrichMetadata()` (sieciowy fallback MusicBrainz/Cover Art Archive) i `resolveLocalAlbumArt()` (lokalny `loadThumbnail`) RÓWNOLEGLE z tego samego, początkowego snapshotu utworów. `MetadataEnrichmentRepositoryImpl.needsCoverArt(track) = track.albumArtUri == null` — a skoro TERAZ każdy lokalny utwór startuje z `null` (nawet taki z dobrą, prawdziwą okładką, tylko jeszcze nierozwiązaną lokalnie), sieciowa ścieżka widziała go jako "brak okładki" i mogła wygrać wyścig z lokalną, trwale nadpisując `TrackMetadataOverrideEntity` swoim (dopasowanym z tekstu, więc potencjalnie GORSZYM) wynikiem — dokładnie odwrotnie niż zasada "dociągaj z sieci TYLKO gdy czegoś faktycznie brakuje", która już wcześniej poprawnie obowiązywała dla tagów tekstowych.
+
+**Naprawa (pierwsza wersja, po drodze SAMA okazała się kolejnym problemem)**: `enrichMetadata()` startuje DOPIERO po pełnym zakończeniu `resolveLocalAlbumArt()` (sekwencyjnie w tej samej korutynie, nie dwie niezależne) — patrz Etap 44 niżej, gdzie ta wersja poprawki sama okazała się mieć realny koszt.
+
+## Etap 44: Ciąg dalszy Etapu 42 — poprawka z niego SAMA dawała zauważalne opóźnienie okładek
+
+*Źródło: user, po Etapie 42/43 — "co z tymi okładkami?" — na żywo, okładki (w tym te, które wcześniej działały natychmiast) nie pojawiały się w bibliotece przez wiele sekund/minut.*
+
+### Diagnoza — TRZECIA wersja tego samego problemu w jednej nocy
+
+Wersja z Etapu 42 ("`enrichMetadata()` czeka na pełne zakończenie `resolveLocalAlbumArt()`") naprawiła wyścig, ale wprowadziła NOWY koszt: `resolveLocalAlbumArt()` przechodziła przez CAŁĄ bibliotekę sekwencyjnie, PRZED jakimkolwiek zapytaniem sieciowym — a dla utworów bez żadnej lokalnej okładki (częste w bibliotece testowej: syntetyczne pliki bez realnego dźwięku) każda próba `loadThumbnail` kończyła się dopiero po pełnym, 3-sekundowym timeout. Przy kilku takich utworach z rzędu cała sieciowa ścieżka (MusicBrainz/Cover Art Archive) — w tym dla utworów NIEPOWIĄZANYCH z tymi wolnymi — czekała dziesiątki sekund, zanim w ogóle ruszyła.
+
+Żywa diagnoza (dodane tymczasowe `Log.d` w `MetadataEnrichmentRepositoryImpl`, usunięte po potwierdzeniu) ujawniła też PRAWDZIWY, dodatkowy czynnik mylący obraz: część utworów w bibliotece testowej miała już zapisany NEGATYWNY wpis w `TrackMetadataOverrideEntity` z WCZEŚNIEJSZYCH, błędnych wersji tej samej poprawki tej samej nocy (`if (dao.get(track.id) != null) continue` poprawnie honorował ten wpis, ale wpis sam był przestarzały/błędny) — myliło to obraz "appka nic nie robi" z rzeczywistym stanem "appka poprawnie NIE ponawia próby dla czegoś, co już (błędnie) sprawdziła". Po `pm clear` (czyste dane, jak przy pierwszej instalacji) i jednym czystym przebiegu — działa poprawnie i szybko.
+
+### Naprawa: JEDEN wspólny potok zamiast dwóch faz
+
+Zamiast "cała biblioteka lokalnie, POTEM cała biblioteka sieciowo", `LocalAlbumArtRepository.resolveOne(track)` (przemianowane z `resolveMissing(tracks)`, przeszło z metody per-lista na per-utwór) jest teraz wołane WEWNĄTRZ pętli `MetadataEnrichmentRepositoryImpl.enrichLibrary` — dla każdego utworu osobno, PRZED odpytaniem MusicBrainz DLA TEGO SAMEGO utworu. Jeden, wspólny, i tak już sekwencyjny (limit MusicBrainz ~1/s) potok — lokalna próba (ograniczona teraz do 1500ms, nie 3000ms) jest małym dodatkiem do KROKU per utwór, nie osobną fazą blokującą całą resztę biblioteki. Dodatkowa korzyść: jeśli lokalna okładka się znajdzie, appka w ogóle nie odpytuje MusicBrainz o samą okładkę (tylko jeśli tagi tekstowe też są złe) — mniej zapytań sieciowych niż w oryginalnej, sprzed-Etapu-42 wersji.
+
+`LibraryViewModel.refresh()` wraca do prostego, jednego wywołania `enrichMetadata(tracks)` — cała koordynacja lokalna-vs-sieciowa przeniesiona do repozytorium, gdzie i tak już mieszka logika kandydowania (`looksIncomplete`/`needsCoverArt`).
+
+**Zweryfikowane na żywo**: `:app:compileDebugKotlin` czyste; po `pm clear` (czysty stan, symulujący pierwszą instalację) biblioteka ładuje się natychmiast, a wszystkie utwory z realnymi metadanymi (Eminem/Metallica/Linkin Park) dostają poprawne okładki w ciągu sekund — potwierdzone zrzutem ekranu. Jedyne dwa utwory bez okładki to prawdziwie syntetyczne pliki testowe (`<unknown>`) bez żadnych odnajdywalnych metadanych lokalnie ani sieciowo — poprawny, oczekiwany stan końcowy, nie błąd.
+
+## Etap 45: Okładki podkastów/Archiwum/audiobooków/radia NIGDY się nie ładowały — brakujący fetcher sieciowy Coil 3
+
+*Źródło: user, zrzut ekranu Home — sekcje "Podkasty dla Ciebie"/"Archiwum"/"Audiobooki dla Ciebie" pokazywały same ikony-zastępniki (antena/"M"/otwarta książka) zamiast realnych okładek, mimo tytułów/podtytułów wczytanych poprawnie. "Czy możemy stworzyć kod który będzie je dodawał?"*
+
+### Diagnoza — to NIE był brakujący kod
+
+Sprawdzone od razu i odrzucone jako przyczyna: `PodcastSearchResult.artworkUrl`, `ArchiveItem.coverUrl`, `Audiobook(SearchResult).coverUrl` — wszystkie trzy modele domenowe JUŻ mają pole na URL okładki, wszystkie trzy repozytoria (`PodcastCatalogRepositoryImpl.topPodcastsByCountry`, `ArchiveRepositoryImpl`, `AudiobookRepositoryImpl`) JUŻ poprawnie parsują realny URL z odpowiedzi API (`artworkUrl600`/`archive.org/services/img/{id}`/`url_iarchive`), a `ArtworkOverlayCard` (komponent karty na Home) JUŻ poprawnie renderuje `AsyncImage`, gdy URL nie jest `null`. Cały ten łańcuch był kompletny i poprawny.
+
+**Prawdziwa przyczyna**: Coil 3 (w przeciwieństwie do Coil 2) **nie ma domyślnie ŻADNEGO fetchera dla `http(s)://`** — oficjalny przewodnik migracji wprost: *"coil-core no longer supports loading images from the network by default. You must add a dependency on one of Coil's network artifacts."* `coil-network-okhttp` był już zadeklarowany w katalogu wersji (`gradle/libs.versions.toml`), a komentarz w `app/build.gradle.kts` przy WebDAV/OkHttp wprost zakładał, że "OkHttp już jest transitywną zależnością przez coil-network-okhttp" — ale nikt nigdy faktycznie nie dodał `implementation(libs.coil.network.okhttp)` do żadnego modułu. Coil **nie loguje błędu** przy braku fetchera — po prostu nic nie renderuje, więc appka od zawsze cicho "działała", ale bez ŻADNEGO obrazka sieciowego w całej aplikacji.
+
+To, co maskowało ten brak przez większość tej sesji: lokalne okładki (`content://`/nowy `file://` z `LocalAlbumArtRepository`, Etap 42/44) działają, bo `FileFetcher`/`ContentUriFetcher` SĄ wbudowane w `coil-core` — nie potrzebują sieci. Utwory jak "Heavy Is the Crown"/"Infinite" w bibliotece testowej renderowały się poprawnie właśnie dlatego (mają prawdziwą, wbudowaną okładkę lokalną) — myląco sugerując, że "okładki sieciowe działają", podczas gdy w rzeczywistości ANI JEDNA sieciowa okładka (MusicBrainz/Cover Art Archive/iTunes/Archive.org/LibriVox/Radio-Browser) nigdy się nie wyświetliła w całej appce.
+
+### Naprawa
+
+Jedna linijka: `implementation(libs.coil.network.okhttp)` w `app/build.gradle.kts` (alias już istniał w katalogu, tylko nieużywany). Zero zmian w kodzie repozytoriów/UI — cały łańcuch już był poprawny, brakowało wyłącznie silnika sieciowego dla Coila.
+
+**Zweryfikowane na żywo**: `:app:compileDebugKotlin` czyste; po instalacji na czysto (`pm clear`) sekcje Home pokazują realne okładki — "The Art of War"/"Alice's Adventures in Wonderland" (prawdziwe okładki książek LibriVox/Archive.org), "Radio Paradise"/"WALMRadio.com" (prawdziwe logo stacji), waveformy i miniatury w liście Archiwum — potwierdzone zrzutami ekranu. Dotyczy to całej appki, nie tylko trzech sekcji ze zgłoszenia — każda dotąd "cicho zepsuta" okładka sieciowa (w tym te MusicBrainz/Cover Art Archive dla utworów bez lokalnej okładki) powinna teraz też działać.
+
+## Etap 46: Archiwum — przeglądanie kategorii pokazywało losowy szum zamiast czegoś wartego uwagi
+
+*Źródło: user, zrzut ekranu kategorii "Muzyka" w Archiwum — wyniki wyglądały na przypadkowe/nieistotne. Pytanie: "W ogóle ładujmy tam w proponowanych muzykę najpierw. Czy możliwe jest stworzenie algo wyszukujcego takie podpowiedzi jakie mogą interesować użytkownika?"*
+
+### Diagnoza
+
+`ArchiveRepositoryImpl.browseCategory()` sortowało `sort[]=date+desc` — na Internet Archive KAŻDY może wgrać cokolwiek w dowolnej chwili (testowe pliki, przypadkowe nazwy), więc "najnowszy upload" to głównie szum, nie coś wartego pokazania. Tymczasem [personalizedForYou] (karuzela "Dla Ciebie" na Home) już poprawnie sortowało `downloads+desc` i już miało logikę dopasowania do lokalnego gustu (wykonawca + gatunek) — ale ta logika nigdy nie była użyta przy przeglądaniu KONKRETNEJ kategorii (`LibraryViewModel.browseArchiveCategory()` wołało wyłącznie dumny `browseCategory`).
+
+### Naprawa
+
+Dwie zmiany, obie w duchu ponownego użycia istniejącego, sprawdzonego wzorca zamiast pisania czegoś nowego:
+
+1. `ArchiveRepositoryImpl.browseCategory()`: `sort = "date+desc"` → `sort = "downloads+desc"` — ten sam sygnał popularności co [topPopular]/[personalizedForYou].
+2. Nowa metoda `ArchiveRepository.personalizedForCategory(category, favoriteArtists, favoriteGenres, limit)` — kopia logiki `personalizedForYou` (dopasowanie po wykonawcy zawsze, po gatunku tylko dla `MUSIC`, bo `GENRE_TO_COLLECTIONS` jest muzyczne), zawężona przez AND do `category.collectionQuery()`. `LibraryViewModel`: wydzielono wspólny `computeLocalTaste()` (wcześniej duplikat tylko wewnątrz `loadPersonalizedArchive()`), `browseArchiveCategory(category)` próbuje najpierw `personalizedForCategory`, z fallbackiem na (teraz też poprawione) `browseCategory`, gdy brak sygnału gustu lub brak wyników.
+
+### Zweryfikowane na żywo — z dłuższym epizodem debugowania NIE związanym z tą zmianą
+
+`:app:compileDebugKotlin`/`:app:assembleDebug` czyste od razu. Instalacja na emulatorze Aurora_Test napotkała długą serię fałszywych ANR-ów ("Aurora isn't responding" → `Input dispatching timed out (Application does not have a focused window)`) — zdiagnozowane jako **artefakt narzędziowy, nie bug appki**: `dumpsys cpuinfo` pokazał `Load: 35.2` tuż po zimnym boocie emulatora (obok trwającego builda Gradle + druga równoległa sesja Claude Code + 2× SQL Server + Discord + Defender na hoście), a `top` później pokazał proces appki w 100% bezczynny (0% CPU, wszystkie wątki `S`/sleeping) mimo wciąż wiszącego dialogu ANR — czyli appka była zdrowa, tylko WindowManagerService gubił focus przy agresywnym skryptowanym `force-stop`+relaunch w kółko. `adb shell monkey -c ... 1` dodatkowo wstrzykiwał losowy dotyk w trakcie przejścia okna (znana pułapka `monkey` z count≥1). Czysty `adb reboot` + pojedynczy `am start` (bez `monkey`) + 12s odczekania dał czyste uruchomienie bez ANR. Po tym: kategoria "Muzyka" pokazała m.in. "The Conet Project" (jedną z najpopularniejszych pozycji w kolekcjach Archive.org audio) zamiast przypadkowych uploadów sprzed naprawy; przełączenie na "Podcasty" poprawnie przefiltrowało do `collection:podcasts` bez crasha. Świeży emulator nie miał lokalnej biblioteki (brak zeskanowanych utworów), więc ścieżka `personalizedForCategory` nie została wyćwiczona na żywo tej sesji — tylko fallback `browseCategory`; sama metoda używa jednak identycznej, już wcześniej żywo zweryfikowanej logiki co `personalizedForYou`.
+
+## Etap 47: Podkasty/Audiobooki z Home — kliknięcie w propozycję pokazywało "już niedostępny"
+
+*Źródło: user, po kliknięciu w kartę "The Joe Rogan Experience" w sekcji "Podkasty dla Ciebie" na Home: "pokazuje ze juz niedostepny".*
+
+### Diagnoza
+
+Karty w "Podkasty dla Ciebie"/"Audiobooki dla Ciebie" na Home to PROPOZYCJE z katalogu
+(`viewModel.podcastSearchResults`/`audiobookSearchResults`, wypełniane przez
+`loadTopPodcasts`/`loadRecommendedAudiobooks` gdy user nie ma jeszcze żadnych subskrypcji/pozycji w
+bibliotece) — user jeszcze NIE zasubskrybował/nie dodał tej pozycji. Tymczasem `PodcastDetailScreen`
+szukało podcastu WYŁĄCZNIE w `subscriptions.find { it.feedUrl == feedUrl }`, a `AudiobookDetailScreen`
+analogicznie wyłącznie w `library.find { it.id == id }` — dla propozycji ta lista jest pusta z
+definicji, więc `podcast`/`audiobook` był zawsze `null` i ekran natychmiast pokazywał "Podcast/Audiobook
+nie jest już dostępny", niezależnie od tego, czy sam feed/książka faktycznie działały. Ten sam bug
+istniał w OBU ekranach (identyczna struktura kodu, jeden wzorowany na drugim) — zgłoszenie dotyczyło
+podkastów, ale audiobooki miały dokładnie tę samą wadę.
+
+### Naprawa
+
+Wzorzec już istniał i działał w `ArchiveItemDetailScreen` (`item = allItems.find {...}`, a gdy `null`,
+tytuł pokazuje surowe `identifier` zamiast blokować cały ekran) — zastosowany tu analogicznie:
+- `PodcastDetailScreen`: `podcast = subscriptions.find{...} ?: searchResults.find{...}?.let { Podcast(...,
+  description = "") }`. `description` nigdzie nie jest renderowany na tym ekranie ani używany w
+  `PodcastEpisode.toTrack` (tylko `title`/`artworkUrl`), więc pusty string jest bezpieczny dla
+  podglądu przed subskrypcją. Ikona nagłówka: `isSubscribed` → Usuń (jak dotąd) / nie-subskrybowany →
+  nowa ikona `LibraryAdd` → `viewModel.subscribeToPodcast(feedUrl)` (zostaje na ekranie, stan
+  reaktywnie się przełącza po subskrypcji).
+- `AudiobookDetailScreen`: identyczny wzorzec z `audiobookSearchResults`/`addAudiobookToLibrary`.
+- W obu przypadkach odtwarzanie (`loadPodcastEpisodes(feedUrl)`/`loadAudiobookChapters(id)`) już
+  wcześniej działało niezależnie od subskrypcji — jedynym brakiem był nagłówek/lookup blokujący cały
+  ekran.
+
+**Zweryfikowane częściowo na żywo**: `:app:compileDebugKotlin`/`:app:assembleDebug` czyste. Na
+świeżo wyczyszczonym (`pm clear`) emulatorze Aurora_Test: kliknięcie w propozycję audiobooka
+"Alice's Adventures in Wonderland" (NIGDY wcześniej nie dodaną do biblioteki) otworzyło ekran z
+poprawnym nagłówkiem (Lewis Carroll) i pełną listą 12 rozdziałów zamiast "Audiobook nie jest już
+dostępny" — bezpośredni dowód, że wzorzec fallbacku działa. Analogicznego zrzutu dla samego Joego
+Rogana NIE udało się zdobyć w tej sesji — karuzela "Podkasty dla Ciebie" na Home wymaga wyboru kraju
+(dialog uprawnień lokalizacji + picker kraju), który się nie domykał w kółko na tym emulatorze, a
+próby dotarcia przez ekran "Subskrypcje" → wyszukiwanie utykały na tym samym dialogu uprawnień.
+Kod podkastów jest jednak strukturalnie identyczny (ten sam typ zmiany, ta sama para
+`searchResults`/`subscriptions`) do już zweryfikowanego kodu audiobooków, więc naprawa uznana za
+gotową mimo braku finalnego zrzutu ekranu z samym Joe Roganem.
+
+## Etap 48: Discord Rich Presence na desktopie — "Słucha Aurora: [utwór]"
+
+*Źródło: user, "czy możemy mieć taką fajną opcje że jeśli słucham muzy na aurorze to w apkach
+pokazuje sie ze to robie - w discordzie spotify pokazuje co ktoś słucha chciałbym żeby też tak
+było". Doprecyzowane w rozmowie: Discord RPC (IPC) jest lokalny — wymaga Discorda na tym samym
+komputerze co Aurora, więc telefon z Androidem nie może tego zrobić wprost (do tego trzeba by
+Last.fm scrobblingu + oficjalnego połączenia Last.fm↔Discord). User świadomie wybrał desktop,
+mimo że moduł `:desktop` jest wciąż bardzo minimalny (Etap 35) — "dopisz do rozwoju, będziemy
+przepisywać apkę, a i tak cały czas ją udoskonalamy".*
+
+### Implementacja
+
+Discord nie publikuje SDK dla czystej Javy/Kotlina/JVM — oficjalny "Game SDK" to natywna
+biblioteka C++ (wymagałaby JNI/JNA). Zamiast dociągać taką zależność, `DiscordRpcClient`
+implementuje protokół Discord IPC (https://discord.com/developers/docs/topics/rpc) ręcznie: to
+tylko ramki `opcode(4B LE) + length(4B LE) + JSON payload` nad lokalnym kanałem —
+`\\.\pipe\discord-ipc-N` na Windowsie (otwierany jak zwykły plik przez `RandomAccessFile`,
+standardowa sztuczka używana przez inne czyste-Java implementacje RPC) albo unix socket pod
+`$XDG_RUNTIME_DIR/discord-ipc-N` na macOS/Linux (`java.nio` `UnixDomainSocketAddress`, JDK 16+;
+moduł jest na JVM 17). JSON budowany przez `org.json` (na Androidzie przychodzi za darmo z
+`android.jar`, na czystym JVM trzeba go dociągnąć jawnie — dodane do `desktop/build.gradle.kts`).
+
+- Handshake (`opcode 0`, `{"v":1,"client_id":...}`) → czeka na `READY`, potem `SET_ACTIVITY`
+  (`opcode 1`) z `details` (tytuł), `state` (wykonawca), `timestamps.start` (epoch startu, żeby
+  Discord sam tykał licznik lokalnie — bez potrzeby wysyłania update'u co sekundę) i `assets`
+  (`large_image: "aurora_logo"` — wymaga wgrania assetu o tej nazwie w Discord Developer Portalu).
+  Pauza: bez `timestamps`, z `small_text: "Wstrzymano"`. Czyszczenie statusu: `SET_ACTIVITY` z
+  `activity: null`.
+- Reconnect loop w tle (`DiscordRpcClient.start()`) próbuje co 10s, gdy niepołączony (Discord
+  mógł nie być jeszcze uruchomiony) — bez blokowania UI, bez crasha gdy Discorda w ogóle nie ma.
+  Wywołania `setNowPlaying`/`clear` są bezpieczne no-opy, dopóki nie ma połączenia.
+- **Celowo świadomy no-op bez konfiguracji**: `DiscordRpcClient.create()` zwraca `null`, gdy brak
+  zmiennej środowiskowej `AURORA_DISCORD_CLIENT_ID` — bo `client_id` to prywatna aplikacja z
+  Discord Developer Portalu (discord.com/developers/applications), którą musi założyć sam user
+  (wymaga jego konta Discord; Claude nie może tego zrobić za niego). Trzeba: 1) założyć aplikację,
+  skopiować "Application ID", 2) w jej zakładce "Rich Presence" → "Art Assets" wgrać obrazek jako
+  `aurora_logo`, 3) ustawić `AURORA_DISCORD_CLIENT_ID=<Application ID>` w środowisku przed
+  uruchomieniem `:desktop:run`.
+- Podpięcie w `Main.kt`: `playIndex` (nowy utwór), przycisk play/pauza, przewijanie sliderem
+  (przelicza `timestamps.start` na nowo, żeby licznik w Discordzie zgadzał się z realną pozycją
+  po seeku) i wybór nowego folderu (czyści status). `onDispose` okna czyści status i zamyka pipe.
+
+**Zweryfikowane**: `:desktop:compileKotlin` czyste. Realna weryfikacja "Discord faktycznie
+pokazuje status" NIE była możliwa w tej sesji (wymaga zalogowanego klienta Discord na tym
+komputerze + realnego `AURORA_DISCORD_CLIENT_ID` usera — obu nie mam) — zostaje do
+zweryfikowania przez usera po skonfigurowaniu własnej aplikacji Discord.

@@ -8,7 +8,6 @@ import com.aurora.player.data.database.entity.TrackCooccurrenceEntity
 import com.aurora.player.domain.model.GeniusMix
 import com.aurora.player.domain.model.Track
 import com.aurora.player.domain.repository.GeniusRepository
-import com.aurora.player.domain.repository.TrackRepository
 import com.aurora.player.domain.usecase.genius.GeniusClustering
 import com.aurora.player.domain.usecase.genius.GeniusDiversifier
 import com.aurora.player.domain.usecase.genius.GeniusScoring
@@ -22,15 +21,14 @@ import kotlin.math.ln
 
 @Singleton
 class GeniusRepositoryImpl @Inject constructor(
-    private val trackRepository: TrackRepository,
     private val trackAffinityDao: TrackAffinityDao,
     private val trackCooccurrenceDao: TrackCooccurrenceDao,
     private val playEventDao: PlayEventDao,
     private val skipEventDao: SkipEventDao,
 ) : GeniusRepository {
 
-    override suspend fun generateInstantMix(seedTrackId: Long, length: Int): List<Track> {
-        val allTracks = trackRepository.getAllTracks()
+    override suspend fun generateInstantMix(seedTrackId: Long, candidateTracks: List<Track>, length: Int): List<Track> {
+        val allTracks = candidateTracks
         val seed = allTracks.find { it.id == seedTrackId } ?: return emptyList()
         val affinityByTrackId = trackAffinityDao.getAll().associate { it.trackId to it.affinityScore }
         val now = System.currentTimeMillis()
@@ -95,8 +93,8 @@ class GeniusRepositoryImpl @Inject constructor(
         return exp(-ageDays / SKIP_PENALTY_DECAY_DAYS).coerceIn(0f, 1f)
     }
 
-    override suspend fun generateGeniusMixes(maxMixes: Int, tracksPerMix: Int): List<GeniusMix> {
-        val allTracks = trackRepository.getAllTracks()
+    override suspend fun generateGeniusMixes(candidateTracks: List<Track>, maxMixes: Int, tracksPerMix: Int): List<GeniusMix> {
+        val allTracks = candidateTracks
         if (allTracks.size < maxMixes) return emptyList()
 
         val affinityByTrackId = trackAffinityDao.getAll().associate { it.trackId to it.affinityScore }

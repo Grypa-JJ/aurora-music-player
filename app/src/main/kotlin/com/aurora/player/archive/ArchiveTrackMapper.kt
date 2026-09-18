@@ -12,7 +12,7 @@ import com.aurora.player.domain.util.TrackIdHasher
  * unikalne dopiero w obrębie jednego itemu (numer ścieżki sam w sobie się powtarza między itemami).
  */
 fun ArchiveTrack.toTrack(item: ArchiveItem): Track = Track(
-    id = TrackIdHasher.deriveId(ARCHIVE_SOURCE_DISCRIMINATOR, "$identifier/$fileName"),
+    id = archiveTrackId(identifier, fileName),
     uri = audioUrl,
     title = title,
     artist = item.creator,
@@ -24,5 +24,14 @@ fun ArchiveTrack.toTrack(item: ArchiveItem): Track = Track(
     albumArtUri = item.coverUrl,
     source = TrackSource.ARCHIVE,
 )
+
+/**
+ * Id współdzielone z [com.aurora.player.data.database.entity.ArchiveLibraryTrackEntity] (patrz
+ * `ArchiveRepositoryImpl.addTrackToLibrary`) — ta sama ścieżka MUSI dostać ten sam `Track.id`
+ * niezależnie, czy gra bezpośrednio ze streamingu, czy z pliku pobranego na stałe do biblioteki,
+ * inaczej ulubione/playlisty (identyfikują utwór tylko po `Long`) zgubiłyby dopasowanie po pobraniu.
+ */
+internal fun archiveTrackId(identifier: String, fileName: String): Long =
+    TrackIdHasher.deriveId(ARCHIVE_SOURCE_DISCRIMINATOR, "$identifier/$fileName")
 
 private const val ARCHIVE_SOURCE_DISCRIMINATOR = "archive_org"

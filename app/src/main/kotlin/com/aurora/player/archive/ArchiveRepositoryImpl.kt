@@ -1,15 +1,33 @@
 package com.aurora.player.archive
 
+import android.content.Context
+import android.net.Uri
 import android.util.Log
+import com.aurora.player.data.database.dao.ArchiveLibraryDao
+import com.aurora.player.data.database.entity.ArchiveLibraryTrackEntity
+import com.aurora.player.di.ApplicationScope
+import com.aurora.player.domain.model.ArchiveCategory
+import com.aurora.player.domain.model.ArchiveDownload
 import com.aurora.player.domain.model.ArchiveItem
 import com.aurora.player.domain.model.ArchiveTrack
+import com.aurora.player.domain.model.Track
 import com.aurora.player.domain.repository.ArchiveRepository
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.io.IOException
 import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -21,29 +39,188 @@ import javax.inject.Singleton
  * nie ma HTTP jako zależności). Wyniki przeglądania/wyszukiwania cache'owane w pamięci procesu na
  * czas życia serwisu (ten sam wzorzec co `cachedGeniusMixes` w `AuroraBrowseTree`) — inaczej
  * przełączanie się między kaflami kolekcji odpytywałoby `archive.org` przy każdym wejściu.
+ *
+ * [library]/[addTrackToLibrary] (Etap 40) to osobna sprawa od przeglądania wyżej — realne pobranie
+ * pliku audio do prywatnego magazynu appki (`context.filesDir`, NIE MediaStore, NIE wymaga
+ * uprawnień), żeby dodana ścieżka grała offline jak lokalny plik, nie tylko streamingowała.
  */
 @Singleton
-class ArchiveRepositoryImpl @Inject constructor() : ArchiveRepository {
+class ArchiveRepositoryImpl @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val archiveLibraryDao: ArchiveLibraryDao,
+    @ApplicationScope scope: CoroutineScope,
+) : ArchiveRepository {
 
     private val httpClient = OkHttpClient.Builder().build()
     private val itemsCache = ConcurrentHashMap<String, List<ArchiveItem>>()
     private val tracksCache = ConcurrentHashMap<String, List<ArchiveTrack>>()
 
-    override suspend fun browseCollection(collection: String, limit: Int): List<ArchiveItem> =
+    override val library: StateFlow<List<Track>> = archiveLibraryDao.observeAll()
+        .map { entities -> entities.map { it.toTrack() } }
+        .stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    private val _downloadingTrackIds = MutableStateFlow<Set<Long>>(emptySet())
+    override val downloadingTrackIds: StateFlow<Set<Long>> = _downloadingTrackIds
+
+    private val _activeDownloads = MutableStateFlow<List<ArchiveDownload>>(emptyList())
+    override val activeDownloads: StateFlow<List<ArchiveDownload>> = _activeDownloads
+
+    private val _lastError = MutableStateFlow<String?>(null)
+    override val lastError: StateFlow<String?> = _lastError
+
+    override fun clearLastError() {
+        _lastError.value = null
+    }
+
+    override suspend fun addTrackToLibrary(track: ArchiveTrack, item: ArchiveItem): Boolean =
         withContext(Dispatchers.IO) {
-            itemsCache.getOrPut("collection:$collection:$limit") {
-                fetchItems("collection:$collection AND mediatype:audio", limit, sort = "date+desc")
+            val trackId = archiveTrackId(track.identifier, track.fileName)
+            if (trackId in _downloadingTrackIds.value || archiveLibraryDao.getByTrackId(trackId) != null) {
+                return@withContext true
+            }
+            _downloadingTrackIds.update { it + trackId }
+            _activeDownloads.update {
+                it + ArchiveDownload(
+                    trackId = trackId,
+                    title = track.title,
+                    subtitle = item.creator.ifBlank { item.title },
+                    coverUrl = item.coverUrl,
+                )
+            }
+            try {
+                val dir = File(context.filesDir, "archive_library/${track.identifier}")
+                dir.mkdirs()
+                val destination = File(dir, track.fileName.substringAfterLast('/').ifBlank { "$trackId.audio" })
+                downloadToFile(track.audioUrl, destination)
+                archiveLibraryDao.insert(
+                    ArchiveLibraryTrackEntity(
+                        trackId = trackId,
+                        identifier = track.identifier,
+                        fileName = track.fileName,
+                        title = track.title,
+                        artist = item.creator,
+                        album = item.title,
+                        year = item.year,
+                        durationMs = track.durationMs,
+                        albumArtUrl = item.coverUrl,
+                        localFileUri = Uri.fromFile(destination).toString(),
+                        addedAtMs = System.currentTimeMillis(),
+                    ),
+                )
+                _lastError.value = null
+                true
+            } catch (e: Exception) {
+                Log.e(TAG, "addTrackToLibrary(): błąd pobierania ${track.audioUrl}", e)
+                // Realny powód (np. "HTTP 403"/"Unable to resolve host") w komunikacie, nie tylko w
+                // Logcacie — bez adb/telefonu pod ręką generyczny tekst nie dawał nic do diagnozy.
+                val reason = e.message?.takeIf { it.isNotBlank() } ?: e.javaClass.simpleName
+                _lastError.value = "Nie udało się pobrać „${track.title}” do biblioteki ($reason)."
+                false
+            } finally {
+                _downloadingTrackIds.update { it - trackId }
+                _activeDownloads.update { list -> list.filterNot { it.trackId == trackId } }
             }
         }
 
-    override suspend fun search(query: String, limit: Int): List<ArchiveItem> {
-        if (query.isBlank()) return emptyList()
-        return withContext(Dispatchers.IO) {
-            val escaped = escapeLucene(query.trim())
-            itemsCache.getOrPut("search:$escaped:$limit") {
-                fetchItems("mediatype:audio AND ($escaped)", limit, sort = null)
+    override suspend fun removeTrackFromLibrary(trackId: Long) = withContext(Dispatchers.IO) {
+        val entity = archiveLibraryDao.getByTrackId(trackId) ?: return@withContext
+        runCatching { Uri.parse(entity.localFileUri).path?.let { File(it).delete() } }
+        archiveLibraryDao.delete(trackId)
+    }
+
+    /** Strumieniuje odpowiedź prosto na dysk — bez ładowania całego pliku (mogą to być dziesiątki MB) do pamięci. */
+    private fun downloadToFile(url: String, destination: File) {
+        val request = Request.Builder().url(url).header("User-Agent", "AuroraMusicPlayer/1.0").build()
+        httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw IOException("HTTP ${response.code}")
+            val body = response.body ?: throw IOException("Pusta odpowiedź serwera")
+            try {
+                body.byteStream().use { input ->
+                    destination.outputStream().use { output -> input.copyTo(output) }
+                }
+            } catch (e: Exception) {
+                destination.delete()
+                throw e
             }
         }
+    }
+
+    override suspend fun browseCategory(category: ArchiveCategory, limit: Int): List<ArchiveItem> =
+        withContext(Dispatchers.IO) {
+            itemsCache.getOrPut("category:$category:$limit") {
+                // Etap 46, zgłoszenie: było `sort = "date+desc"` (najnowsze UPLOADY) — na Internet
+                // Archive każdy może wgrać cokolwiek w dowolnej chwili, więc "najnowsze" to głównie
+                // szum (testowe pliki, przypadkowe nazwy), nie coś wartego pokazania. `downloads+desc`
+                // to ten sam sygnał popularności, którego już używa [topPopular]/[personalizedForYou].
+                fetchItems("${category.collectionQuery()} AND mediatype:audio", limit, sort = "downloads+desc")
+            }
+        }
+
+    /**
+     * Top popularne wg regionu urządzenia — IA nie ma pola geograficznego, więc "region" przybliżamy
+     * językiem systemowym (`Locale` → `language:` w metadanych, ta sama mapa co `#tag` w [search]).
+     * Gdy region nie da wyników (niszowy język / brak treści w tym języku na IA), spadamy na Zachód
+     * (UE/USA/Australia, patrz [WESTERN_FALLBACK_LANGUAGES]) z wykluczeniem rosyjskojęzycznych —
+     * a dopiero jeśli i to nic nie zwróci, na zupełnie globalne top popularne.
+     */
+    override suspend fun topPopular(limit: Int): List<ArchiveItem> = withContext(Dispatchers.IO) {
+        val regionLanguage = LANGUAGE_TAGS[context.resources.configuration.locales[0].language.lowercase()]
+        val regional = regionLanguage?.let {
+            itemsCache.getOrPut("popular:$it:$limit") {
+                fetchItems("mediatype:audio AND language:($it)", limit, sort = "downloads+desc")
+            }
+        }
+        if (!regional.isNullOrEmpty()) return@withContext regional
+
+        val western = itemsCache.getOrPut("popular:western:$limit") {
+            fetchItems(WESTERN_FALLBACK_QUERY, limit, sort = "downloads+desc")
+        }
+        if (western.isNotEmpty()) return@withContext western
+
+        itemsCache.getOrPut("popular:$limit") {
+            fetchItems("mediatype:audio", limit, sort = "downloads+desc")
+        }
+    }
+
+    override suspend fun search(query: String, category: ArchiveCategory?, limit: Int): List<ArchiveItem> {
+        if (query.isBlank()) return emptyList()
+        return withContext(Dispatchers.IO) {
+            val trimmed = query.trim()
+            val tokens = trimmed.split(Regex("\\s+"))
+            val tagClauses = tokens.filter { it.length > 1 && it.startsWith("#") }.map { tagClause(it.substring(1)) }
+            val freeText = tokens.filterNot { it.startsWith("#") }.joinToString(" ").trim()
+            val textClause = freeText.takeIf { it.isNotBlank() }?.let { "(${escapeLucene(it)})" }
+            val clauses = listOfNotNull(textClause) + tagClauses
+            if (clauses.isEmpty()) return@withContext emptyList()
+            val categoryFilter = category?.let { "${it.collectionQuery()} AND " }.orEmpty()
+            itemsCache.getOrPut("search:$category:$trimmed:$limit") {
+                fetchItems("${categoryFilter}mediatype:audio AND (${clauses.joinToString(" AND ")})", limit, sort = null)
+            }
+        }
+    }
+
+    /**
+     * `#tag` w wyszukiwarce (np. `#pl`, `#rap`) — Internet Archive nie ma hashtagów, więc dwuliterowe
+     * kody językowe idą do pola `language:` (`#pl` → `Polish`), reszta do `subject:` (temat/tag nadany
+     * przez uploadera). Pokrycie metadanych bywa niepełne, więc brak wyników nie znaczy braku treści.
+     */
+    private fun tagClause(rawTag: String): String {
+        val normalized = rawTag.lowercase()
+        val escaped = escapeLucene(normalized)
+        val language = LANGUAGE_TAGS[normalized]
+        return if (language != null) "(language:($language) OR subject:($escaped))" else "subject:($escaped)"
+    }
+
+    /**
+     * Mapowanie kategorii UI na realne kolekcje Internet Archive (nawigacja archive.org/details/audio):
+     * Live Music Archive + Netlabele + Community Audio dla muzyki, Podcasts, Audio Books & Poetry,
+     * Radio Programs + Old Time Radio dla radia.
+     */
+    private fun ArchiveCategory.collectionQuery(): String = when (this) {
+        ArchiveCategory.MUSIC -> "(collection:etree OR collection:netlabels OR collection:opensource_audio)"
+        ArchiveCategory.PODCASTS -> "collection:podcasts"
+        ArchiveCategory.AUDIOBOOKS -> "collection:audio_bookspoetry"
+        ArchiveCategory.RADIO -> "(collection:radioprograms OR collection:oldtimeradio)"
     }
 
     override suspend fun tracksForItem(identifier: String): List<ArchiveTrack> = withContext(Dispatchers.IO) {
@@ -79,6 +256,42 @@ class ArchiveRepositoryImpl @Inject constructor() : ArchiveRepository {
                 limit = PER_QUERY_LIMIT,
                 sort = "downloads+desc",
             )
+        }
+
+        (artistMatches + genreMatches).distinctBy { it.identifier }.take(limit)
+    }
+
+    override suspend fun personalizedForCategory(
+        category: ArchiveCategory,
+        favoriteArtists: List<String>,
+        favoriteGenres: List<String>,
+        limit: Int,
+    ): List<ArchiveItem> = withContext(Dispatchers.IO) {
+        if (favoriteArtists.isEmpty() && favoriteGenres.isEmpty()) return@withContext emptyList()
+        val categoryFilter = category.collectionQuery()
+
+        val artistMatches = favoriteArtists.take(MAX_TASTE_ARTISTS).flatMap { artist ->
+            val escaped = escapeLucene(artist)
+            fetchItems(
+                query = "creator:(\"$escaped\") AND mediatype:audio AND $categoryFilter",
+                limit = PER_QUERY_LIMIT,
+                sort = "downloads+desc",
+            )
+        }
+
+        // Mapa gatunek→kolekcja jest muzyczna (patrz GENRE_TO_COLLECTIONS) — dla innych kategorii
+        // (Podcasty/Audiobooki/Radio) dopasowanie po gatunku nic by nie znaczyło.
+        val genreMatches = if (category == ArchiveCategory.MUSIC) {
+            favoriteGenres.take(MAX_TASTE_GENRES).flatMap { genre ->
+                val collectionQuery = collectionsForGenre(genre).joinToString(" OR ") { "collection:$it" }
+                fetchItems(
+                    query = "($collectionQuery) AND mediatype:audio",
+                    limit = PER_QUERY_LIMIT,
+                    sort = "downloads+desc",
+                )
+            }
+        } else {
+            emptyList()
         }
 
         (artistMatches + genreMatches).distinctBy { it.identifier }.take(limit)
@@ -210,6 +423,24 @@ class ArchiveRepositoryImpl @Inject constructor() : ArchiveRepository {
         val AUDIO_FORMAT_PRIORITY = listOf(
             "VBR MP3", "128Kbps MP3", "64Kbps MP3", "MP3", "Ogg Vorbis", "Flac", "24bit Flac",
         )
+
+        /** Dwuliterowe kody `#tag` rozpoznawane jako język (pole `language:` w metadanych IA) zamiast `subject:`. */
+        val LANGUAGE_TAGS = mapOf(
+            "pl" to "Polish", "en" to "English", "de" to "German", "fr" to "French",
+            "es" to "Spanish", "it" to "Italian", "ru" to "Russian", "pt" to "Portuguese",
+            "nl" to "Dutch", "uk" to "Ukrainian", "cs" to "Czech", "sk" to "Slovak",
+            "ja" to "Japanese", "ko" to "Korean", "zh" to "Chinese", "sv" to "Swedish",
+        )
+
+        /** Fallback regionu dla [topPopular], gdy język urządzenia nie ma dopasowania na IA — Zachód (UE/USA/Australia), świadomie bez rosyjskiego. */
+        val WESTERN_FALLBACK_LANGUAGES = listOf(
+            "English", "German", "French", "Spanish", "Italian", "Polish", "Dutch", "Portuguese", "Swedish", "Czech", "Slovak",
+        )
+
+        /** `NOT language:(Russian)` jako dodatkowe zabezpieczenie — pozycja może mieć kilka języków w metadanych (np. "English, Russian"). */
+        val WESTERN_FALLBACK_QUERY =
+            "mediatype:audio AND (${WESTERN_FALLBACK_LANGUAGES.joinToString(" OR ") { "language:($it)" }}) " +
+                "AND NOT language:(Russian)"
 
         /**
          * Mapa gatunek→kolekcja IA — dopasowanie CZĘŚCIOWE stringa (tagi ID3 są bałaganiarskie,

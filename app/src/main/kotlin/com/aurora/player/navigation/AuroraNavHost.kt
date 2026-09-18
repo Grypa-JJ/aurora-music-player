@@ -1,14 +1,31 @@
 package com.aurora.player.navigation
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Scaffold
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import androidx.navigation.NavHostController
@@ -22,6 +39,7 @@ import com.aurora.player.account.AccountScreen
 import com.aurora.player.album.AlbumDetailScreen
 import com.aurora.player.archive.ArchiveItemDetailScreen
 import com.aurora.player.archive.ArchiveScreen
+import com.aurora.player.archive.DownloadsScreen
 import com.aurora.player.artist.ArtistDetailScreen
 import com.aurora.player.audiobook.AudiobookDetailScreen
 import com.aurora.player.audiobook.AudiobooksScreen
@@ -79,6 +97,19 @@ private fun decodeRouteArg(value: String): String = URLDecoder.decode(value, "UT
  * są niezależne (osobne okna blur, np. pod EQ sheet). Naprawia też realny gap: `MiniPlayerBar`
  * miał parametr `hazeState` od Etapu 37, ale to wywołanie nigdy go nie przekazywało — więc mini-
  * player nigdy nie miał prawdziwego blura, tylko płaski `surfaceColor` fallback.
+ *
+ * Etap 40, zgłoszenie ze zrzutem ekranu ("pasek ma być transparentny z widocznym przewijaniem w
+ * warstwie pod, cieniowanie jak w Spotify"): [Scaffold] zamieniony na zwykły [Box] — `Scaffold`
+ * liczył `innerPadding` tak, żeby treść NIGDY nie zachodziła pod `bottomBar` (to sam sens
+ * `innerPadding`), więc mimo poprawnie podłączonego `hazeSource`/`hazeEffect` wyżej, pod paskiem
+ * faktycznie nic nie było narysowane — Haze rozmywał pustkę, stąd pasek wyglądał na płaski i
+ * nieprzezroczysty niezależnie od tego, co user przewijał. Teraz `NavHost` jest pełnoekranowy
+ * (`fillMaxSize`, BEZ odejmowania wysokości paska), a pasek pływa NAD nim jako overlay — treść
+ * realnie przewija się pod nim i jest widoczna (rozmyta) przez `hazeEffect`. Żeby ostatni element
+ * listy nie chował się na stałe pod paskiem, jego zmierzona wysokość idzie przez
+ * [LocalBottomChromeInset] do ekranów root (Home/Biblioteka/Odkrywaj), które dodają ją do swojego
+ * dolnego `contentPadding`/spacera — pozostałe ekrany (detale, Radio/Podkasty/Audiobooki itd.)
+ * nie zostały jeszcze zaktualizowane, ich ostatnia pozycja może więc dotykać krawędzi paska.
  */
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
@@ -94,33 +125,35 @@ fun AuroraNavHost(
     // Spotify — znika TYLKO na pełnoekranowym Now Playing. Poprzednia wersja pokazywała ją
     // wyłącznie na 4 zakładkach root, co dawało wrażenie "appka bez dołu" na każdym innym ekranie.
     val showBottomChrome = currentRoute != ROUTE_NOW_PLAYING
+    val density = LocalDensity.current
+    var bottomChromeHeight by remember { mutableStateOf(0.dp) }
 
-    Scaffold(
-        bottomBar = {
-            if (showBottomChrome) {
-                Column {
-                    playbackState.currentTrack?.let { track ->
-                        MiniPlayerBar(
-                            title = track.title,
-                            artist = track.artist,
-                            albumArtUrl = track.albumArtUri,
-                            isPlaying = playbackState.isPlaying,
-                            onTogglePlayPause = libraryViewModel::onTogglePlayPause,
-                            onClick = { navController.navigate(ROUTE_NOW_PLAYING) },
-                            hazeState = hazeState,
-                        )
-                    }
-                    AuroraBottomNav(navController, hazeState)
-                }
-            }
-        },
-    ) { innerPadding ->
-        SharedTransitionLayout {
-            NavHost(
-                navController = navController,
-                startDestination = ROUTE_HOME,
-                modifier = Modifier.padding(innerPadding).hazeSource(state = hazeState),
-            ) {
+    // Etap 44, zgłoszenie: personalizacja Archiwum ("Dla Ciebie", filtrowanie po kategorii) czyta
+    // lokalną bibliotekę (`uiState.allTracks`) w momencie wywołania, ale ten skan dotąd startował
+    // TYLKO wewnątrz LibraryScreen (permission launcher tam, patrz jego `LaunchedEffect`) — user,
+    // który wszedł w Archiwum z Home/Odkrywaj bez uprzedniego wejścia w Bibliotekę, dostawał
+    // personalizację liczoną z pustej listy utworów (zawsze fallback na "popularne", nigdy
+    // faktyczne dopasowanie). Tu, na poziomie hosta (uruchamiane raz, niezależnie od aktywnej
+    // zakładki), gdy uprawnienie JEST już nadane (zwykły przypadek dla powracającego usera), skan
+    // startuje od razu przy starcie appki — zanim user w ogóle zdąży dotrzeć do Archiwum. Gdy
+    // uprawnienia jeszcze nie ma, świadomie NIC nie robimy tutaj (brak popupu z uprawnieniem od
+    // razu na starcie) — prośba o zgodę zostaje tam, gdzie była, w LibraryScreen.
+    val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        val alreadyGranted = ContextCompat.checkSelfPermission(context, audioLibraryPermission) ==
+            PackageManager.PERMISSION_GRANTED
+        if (alreadyGranted) libraryViewModel.onPermissionResult(true)
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        val bottomInset = if (showBottomChrome) bottomChromeHeight.coerceAtLeast(0.dp) else 0.dp
+        CompositionLocalProvider(LocalBottomChromeInset provides bottomInset) {
+            SharedTransitionLayout {
+                NavHost(
+                    navController = navController,
+                    startDestination = ROUTE_HOME,
+                    modifier = Modifier.fillMaxSize().hazeSource(state = hazeState),
+                ) {
                 composable(ROUTE_HOME) {
                     HomeScreen(
                         viewModel = libraryViewModel,
@@ -152,10 +185,15 @@ fun AuroraNavHost(
                         onOpenArtist = { name -> navController.navigate("artist/${encodeRouteArg(name)}") },
                         onOpenPodcasts = { navController.navigate(ROUTE_PODCASTS) },
                         onOpenAccount = { navController.navigate(ROUTE_ACCOUNT) },
+                        onOpenDownloads = { navController.navigate(ROUTE_DOWNLOADS) },
                     )
                 }
                 composable(ROUTE_DISCOVER) {
-                    DiscoverScreen(onOpenDomain = { domain -> navController.openDomain(domain) })
+                    DiscoverScreen(
+                        viewModel = libraryViewModel,
+                        onOpenDomain = { domain -> navController.openDomain(domain) },
+                        onOpenSearch = { navController.navigateToTab(ROUTE_SEARCH) },
+                    )
                 }
                 composable(ROUTE_SEARCH) {
                     SearchScreen(
@@ -329,10 +367,47 @@ fun AuroraNavHost(
                         onBack = { navController.popBackStack() },
                     )
                 }
+                composable(ROUTE_DOWNLOADS) {
+                    DownloadsScreen(
+                        viewModel = libraryViewModel,
+                        onBack = { navController.popBackStack() },
+                    )
+                }
+            }
+            }
+        }
+
+        if (showBottomChrome) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .onSizeChanged { size -> bottomChromeHeight = with(density) { size.height.toDp() } },
+            ) {
+                playbackState.currentTrack?.let { track ->
+                    MiniPlayerBar(
+                        title = track.title,
+                        artist = track.artist,
+                        albumArtUrl = track.albumArtUri,
+                        isPlaying = playbackState.isPlaying,
+                        onTogglePlayPause = libraryViewModel::onTogglePlayPause,
+                        onClick = { navController.navigate(ROUTE_NOW_PLAYING) },
+                        hazeState = hazeState,
+                    )
+                }
+                AuroraBottomNav(navController, hazeState)
             }
         }
     }
 }
+
+/** Ten sam wybór wg SDK co w `LibraryScreen.kt` (osobny plik, celowy mały duplikat — patrz `formatDuration`). */
+private val audioLibraryPermission: String
+    get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        Manifest.permission.READ_MEDIA_AUDIO
+    } else {
+        Manifest.permission.READ_EXTERNAL_STORAGE
+    }
 
 private fun routeForDomain(domain: ContentDomain): String = when (domain) {
     ContentDomain.Biblioteka -> ROUTE_LIBRARY

@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -37,6 +38,7 @@ import coil3.compose.AsyncImage
 import com.aurora.player.designsystem.components.TrackListItem
 import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
+import com.aurora.player.domain.model.Audiobook
 import com.aurora.player.library.LibraryViewModel
 import java.util.concurrent.TimeUnit
 
@@ -49,12 +51,24 @@ fun AudiobookDetailScreen(
     modifier: Modifier = Modifier,
 ) {
     val library by viewModel.audiobookLibrary.collectAsState()
+    val searchResults by viewModel.audiobookSearchResults.collectAsState()
     val chapters by viewModel.audiobookChapters.collectAsState()
     val isLoading by viewModel.isLoadingAudiobookChapters.collectAsState()
     val playbackState by viewModel.playbackState.collectAsState()
     val tokens = LocalAuroraTokens.current
 
-    val audiobook = remember(library, id) { library.find { it.id == id } }
+    val libraryAudiobook = remember(library, id) { library.find { it.id == id } }
+    // Karty "Audiobooki dla Ciebie" na Home wołają ten ekran z id jeszcze NIEDODANYM do biblioteki
+    // (to tylko propozycja z katalogu LibriVox) — bez tego fallbacku każde takie kliknięcie
+    // pokazywało "Audiobook nie jest już dostępny", bo szukaliśmy tylko w bibliotece. `description`
+    // nie jest nigdzie renderowany na tym ekranie ani używany w [AudiobookChapter.toTrack], więc
+    // pusty string jest bezpieczny dla podglądu przed dodaniem.
+    val audiobook = remember(libraryAudiobook, searchResults, id) {
+        libraryAudiobook ?: searchResults.find { it.id == id }?.let {
+            Audiobook(id = it.id, title = it.title, author = it.author, language = it.language, coverUrl = it.coverUrl, description = "")
+        }
+    }
+    val isInLibrary = libraryAudiobook != null
 
     LaunchedEffect(id) { viewModel.loadAudiobookChapters(id) }
 
@@ -88,15 +102,26 @@ fun AudiobookDetailScreen(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(start = tokens.spacing.xs),
             )
-            Icon(
-                imageVector = Icons.Filled.Delete,
-                contentDescription = "Usuń z biblioteki",
-                tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                modifier = Modifier.padding(end = tokens.spacing.m).size(22.dp).clickable {
-                    viewModel.removeAudiobookFromLibrary(id)
-                    onBack()
-                },
-            )
+            if (isInLibrary) {
+                Icon(
+                    imageVector = Icons.Filled.Delete,
+                    contentDescription = "Usuń z biblioteki",
+                    tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(end = tokens.spacing.m).size(22.dp).clickable {
+                        viewModel.removeAudiobookFromLibrary(id)
+                        onBack()
+                    },
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.LibraryAdd,
+                    contentDescription = "Dodaj do biblioteki",
+                    tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(end = tokens.spacing.m).size(22.dp).clickable {
+                        viewModel.addAudiobookToLibrary(id)
+                    },
+                )
+            }
         }
 
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s)) {

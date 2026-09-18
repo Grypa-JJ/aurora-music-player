@@ -6,17 +6,15 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.lazy.LazyListScope
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -47,6 +45,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.aurora.player.designsystem.components.AlbumArtCard
 import com.aurora.player.designsystem.components.ArtworkOverlayCard
+import com.aurora.player.designsystem.components.HorizontalShelf
+import com.aurora.player.designsystem.components.ShelfHeading
 import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.ContentDomain
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
@@ -56,6 +56,7 @@ import com.aurora.player.domain.model.Track
 import com.aurora.player.library.LibraryViewModel
 import com.aurora.player.library.groupTracksByAlbum
 import com.aurora.player.location.resolveCountryCodeFromLastKnownLocation
+import com.aurora.player.navigation.LocalBottomChromeInset
 import java.util.Locale
 
 /**
@@ -171,8 +172,8 @@ fun HomeScreen(
         )
 
         if (recentAlbums.isNotEmpty()) {
-            SectionHeading(title = "Biblioteka")
-            HomeShelf {
+            ShelfHeading(title = "Biblioteka")
+            HorizontalShelf {
                 items(recentAlbums) { group ->
                     AlbumArtCard(
                         title = group.name,
@@ -185,8 +186,8 @@ fun HomeScreen(
         }
 
         if (playlists.isNotEmpty()) {
-            SectionHeading(title = "Playlisty")
-            HomeShelf {
+            ShelfHeading(title = "Playlisty")
+            HorizontalShelf {
                 items(playlists) { playlist ->
                     ArtworkOverlayCard(
                         title = playlist.name,
@@ -201,8 +202,8 @@ fun HomeScreen(
         }
 
         if (geniusMixes.isNotEmpty()) {
-            SectionHeading(title = "Miksy Geniusa")
-            HomeShelf {
+            ShelfHeading(title = "Miksy Geniusa")
+            HorizontalShelf {
                 itemsIndexed(geniusMixes) { index, mix ->
                     ArtworkOverlayCard(
                         title = mix.name,
@@ -220,8 +221,8 @@ fun HomeScreen(
         // ukryta jak w Etapie 37 (`if (podcastSubscriptions.isNotEmpty())` chowało całą sekcję).
         val podcastsToShow = podcastSubscriptions.ifEmpty { null }
         if (podcastsToShow != null) {
-            SectionHeading(title = "Podkasty")
-            HomeShelf {
+            ShelfHeading(title = "Podkasty")
+            HorizontalShelf {
                 items(podcastsToShow) { podcast ->
                     ArtworkOverlayCard(
                         title = podcast.title,
@@ -234,8 +235,8 @@ fun HomeScreen(
                 }
             }
         } else if (recommendedPodcasts.isNotEmpty()) {
-            SectionHeading(title = "Podkasty dla Ciebie")
-            HomeShelf {
+            ShelfHeading(title = "Podkasty dla Ciebie")
+            HorizontalShelf {
                 items(recommendedPodcasts) { result ->
                     ArtworkOverlayCard(
                         title = result.title,
@@ -250,8 +251,8 @@ fun HomeScreen(
         }
 
         if (archiveItems.isNotEmpty()) {
-            SectionHeading(title = "Archiwum")
-            HomeShelf {
+            ShelfHeading(title = "Archiwum")
+            HorizontalShelf {
                 items(archiveItems) { item ->
                     ArtworkOverlayCard(
                         title = item.title,
@@ -269,8 +270,8 @@ fun HomeScreen(
         // wzorzec co Podkasty wyżej.
         val audiobooksToShow = audiobookLibrary.ifEmpty { null }
         if (audiobooksToShow != null) {
-            SectionHeading(title = "Audiobooki")
-            HomeShelf {
+            ShelfHeading(title = "Audiobooki")
+            HorizontalShelf {
                 items(audiobooksToShow) { book ->
                     ArtworkOverlayCard(
                         title = book.title,
@@ -283,8 +284,8 @@ fun HomeScreen(
                 }
             }
         } else if (recommendedAudiobooks.isNotEmpty()) {
-            SectionHeading(title = "Audiobooki dla Ciebie")
-            HomeShelf {
+            ShelfHeading(title = "Audiobooki dla Ciebie")
+            HorizontalShelf {
                 items(recommendedAudiobooks) { result ->
                     ArtworkOverlayCard(
                         title = result.title,
@@ -301,8 +302,8 @@ fun HomeScreen(
         // Radio nie ma koncepcji "biblioteki" — zawsze najpopularniejsze stacje dla regionu,
         // tap = odtwórz od razu (tak jak w RadioScreen), bez ekranu szczegółów.
         if (radioStations.isNotEmpty()) {
-            SectionHeading(title = "Radio")
-            HomeShelf {
+            ShelfHeading(title = "Radio")
+            HorizontalShelf {
                 items(radioStations) { station ->
                     ArtworkOverlayCard(
                         title = station.name,
@@ -316,7 +317,11 @@ fun HomeScreen(
             }
         }
 
-        Box(modifier = Modifier.size(tokens.spacing.xl))
+        // Pływający mini-player + dolna nawigacja (patrz AuroraNavHost/LocalBottomChromeInset) —
+        // NavHost jest teraz pełnoekranowy (żeby treść realnie przewijała się pod paskiem i Haze
+        // miał co rozmywać), więc ostatni shelf potrzebuje realnej wysokości paska jako spacera,
+        // nie sztywnego `xl`, inaczej "Radio" chowałoby się na stałe pod nim.
+        Box(modifier = Modifier.height(LocalBottomChromeInset.current + tokens.spacing.xl))
     }
 }
 
@@ -325,28 +330,3 @@ private fun Playlist.firstArtworkUrl(trackById: Map<Long, Track>): String? =
 
 private fun GeniusMix.firstArtworkUrl(): String? =
     tracks.firstNotNullOfOrNull { it.albumArtUri }
-
-/** Nagłówek sekcji shelfa ("Biblioteka"/"Playlisty"/...) — `Title` (18-20sp Medium), zgodnie z
- *  DESIGN.md sekcja 2.2 ("nagłówki sekcji"), NIE `Label`+accentColor jak stary `HomeSection` z
- *  Etapu 37 — ten dashboard nie jest już kolorowy per sekcja, akcent żyje tylko w okładkach. */
-@Composable
-private fun SectionHeading(title: String) {
-    val tokens = LocalAuroraTokens.current
-    Text(
-        text = title,
-        style = AuroraTextStyles.Title,
-        color = MaterialTheme.colorScheme.onBackground,
-        modifier = Modifier.padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s)
-            .padding(top = tokens.spacing.l),
-    )
-}
-
-@Composable
-private fun HomeShelf(content: LazyListScope.() -> Unit) {
-    val tokens = LocalAuroraTokens.current
-    LazyRow(
-        contentPadding = PaddingValues(horizontal = tokens.spacing.m),
-        horizontalArrangement = Arrangement.spacedBy(tokens.spacing.s),
-        content = content,
-    )
-}

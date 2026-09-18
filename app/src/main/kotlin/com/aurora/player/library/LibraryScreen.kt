@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.AddToQueue
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.PlaylistAdd
@@ -75,6 +76,7 @@ import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
 import com.aurora.player.domain.model.Track
 import com.aurora.player.domain.model.TrackSource
+import com.aurora.player.navigation.LocalBottomChromeInset
 import com.aurora.player.playlist.AddToPlaylistSheet
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeEffect
@@ -106,6 +108,7 @@ fun LibraryScreen(
     onOpenArtist: (String) -> Unit,
     onOpenPodcasts: () -> Unit,
     onOpenAccount: () -> Unit,
+    onOpenDownloads: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -117,6 +120,7 @@ fun LibraryScreen(
     val webDavServerLabel by viewModel.webDavServerLabel.collectAsState()
     val playlists by viewModel.playlists.collectAsState()
     val favoriteTrackIds by viewModel.favoriteTrackIds.collectAsState()
+    val archiveLibraryTracks by viewModel.archiveLibraryTracks.collectAsState()
     val tokens = LocalAuroraTokens.current
     val hazeState = rememberHazeState()
 
@@ -300,6 +304,14 @@ fun LibraryScreen(
                         onClick = onOpenPodcasts,
                     )
                 }
+                item {
+                    DomainShortcutCard(
+                        icon = Icons.Filled.Download,
+                        title = "Pobrane",
+                        subtitle = "${archiveLibraryTracks.size} utworów",
+                        onClick = onOpenDownloads,
+                    )
+                }
             }
 
             // Etap 22/23, user: "wszystkie wymienione" (Albumy/Wykonawcy z pierwotnej wizji,
@@ -398,9 +410,14 @@ fun LibraryScreen(
                 else -> {
                     LazyColumn(
                         modifier = Modifier.weight(1f),
+                        // Dolny padding = realna wysokość pływającego mini-playera/nawigacji
+                        // (AuroraNavHost/LocalBottomChromeInset) — NavHost jest pełnoekranowy, więc
+                        // bez tego ostatni utwór chowałby się na stałe pod paskiem.
                         contentPadding = PaddingValues(
-                            horizontal = tokens.spacing.s,
-                            vertical = tokens.spacing.s,
+                            start = tokens.spacing.s,
+                            end = tokens.spacing.s,
+                            top = tokens.spacing.s,
+                            bottom = LocalBottomChromeInset.current + tokens.spacing.s,
                         ),
                     ) {
                         items(filteredTracks, key = { it.id }) { track ->
@@ -414,6 +431,7 @@ fun LibraryScreen(
                                 onGeniusClick = { viewModel.onGeniusClick(track) },
                                 onMoreClick = { trackForMenu = track },
                                 isCloudTrack = track.source == TrackSource.CLOUD,
+                                isSavedOffline = track.source == TrackSource.ARCHIVE,
                             )
                         }
                     }
@@ -421,15 +439,17 @@ fun LibraryScreen(
             }
         }
 
-        // Etap 37: MiniPlayerBar przeniesiony na poziom AuroraNavHost/Scaffold (jeden wspólny
-        // pasek nad AuroraBottomNav, widoczny na wszystkich 4 zakładkach, nie tylko tutaj) —
-        // patrz AuroraNavHost.kt. Snackbar nie potrzebuje już ręcznego odstępu pod mini-player,
-        // bo ten ekran żyje wewnątrz Scaffold.content, które Compose już przycina nad bottomBar.
+        // Etap 37: MiniPlayerBar przeniesiony na poziom AuroraNavHost (jeden wspólny pasek nad
+        // AuroraBottomNav, widoczny na wszystkich zakładkach, nie tylko tutaj) — patrz
+        // AuroraNavHost.kt. Etap 40, zgłoszenie: NavHost tam jest pełnoekranowy (nie przycięty
+        // przez Scaffold), więc Snackbar BEZ `LocalBottomChromeInset` faktycznie chował się pod
+        // pływającym paskiem (float leży NAD treścią ekranu, nie za nią) — poprzedni komentarz o
+        // "akceptowalności" tego był błędny.
         SnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = tokens.spacing.m),
+                .padding(bottom = LocalBottomChromeInset.current + tokens.spacing.m),
         ) { data ->
             Snackbar(snackbarData = data)
         }

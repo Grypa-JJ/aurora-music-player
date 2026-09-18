@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.OfflinePin
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -43,6 +44,7 @@ fun TrackListItem(
     onGeniusClick: (() -> Unit)? = null,
     onMoreClick: (() -> Unit)? = null,
     isCloudTrack: Boolean = false,
+    isSavedOffline: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val tokens = LocalAuroraTokens.current
@@ -106,6 +108,17 @@ fun TrackListItem(
                 imageVector = Icons.Filled.Cloud,
                 contentDescription = "Z Google Drive",
                 tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.35f),
+                modifier = Modifier
+                    .padding(end = tokens.spacing.xs)
+                    .size(14.dp),
+            )
+        }
+
+        if (isSavedOffline) {
+            Icon(
+                imageVector = Icons.Filled.OfflinePin,
+                contentDescription = "Zapisane offline",
+                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
                 modifier = Modifier
                     .padding(end = tokens.spacing.xs)
                     .size(14.dp),

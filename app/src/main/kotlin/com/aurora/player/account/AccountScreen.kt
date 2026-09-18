@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
+import com.aurora.player.navigation.LocalBottomChromeInset
 
 /**
  * Konto + logowanie — fundament pod synchronizację między telefonem a desktopem (DESIGN.md
@@ -102,7 +103,12 @@ fun AccountScreen(
             )
         }
 
-        SnackbarHost(hostState = snackbarHostState)
+        // Etap 40, zgłoszenie: bez tego Snackbar mógł wylądować pod pływającym mini-playerem/
+        // nawigacją na dole (NavHost jest pełnoekranowy, patrz AuroraNavHost/LocalBottomChromeInset).
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.padding(bottom = LocalBottomChromeInset.current),
+        )
     }
 }
 

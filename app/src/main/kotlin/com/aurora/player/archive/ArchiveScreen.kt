@@ -47,26 +47,23 @@ import coil3.compose.AsyncImage
 import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.ContentDomain
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
-import com.aurora.player.domain.model.ArchiveCollections
+import com.aurora.player.domain.model.ArchiveCategory
 import com.aurora.player.domain.model.ArchiveItem
 import com.aurora.player.library.LibraryViewModel
 
-private data class CollectionTile(val label: String, val collection: String)
-
-/** Sentinel odróżniający "Dla Ciebie" (personalizacja) od realnej kolekcji IA — patrz LaunchedEffect niżej. */
-private const val PERSONALIZED_TILE = "personalized"
-
-private val COLLECTION_TILES = listOf(
-    CollectionTile("Dla Ciebie", PERSONALIZED_TILE),
-    CollectionTile("Koncerty na żywo", ArchiveCollections.LIVE_MUSIC),
-    CollectionTile("Netlabele — muzyka współczesna", ArchiveCollections.NETLABELS),
-    CollectionTile("Stare radio", ArchiveCollections.OLD_TIME_RADIO),
+/** Etykiety kategorii w UI — kolejność determinuje kolejność chipów. */
+private val CATEGORY_LABELS = linkedMapOf(
+    ArchiveCategory.MUSIC to "Muzyka",
+    ArchiveCategory.PODCASTS to "Podcasty",
+    ArchiveCategory.AUDIOBOOKS to "Audiobooki",
+    ArchiveCategory.RADIO to "Radio",
 )
 
 /**
  * "Archiwum" (Internet Archive pod spodem, DESIGN.md Etap 37) — koncerty na żywo, netlabele
- * (współczesna muzyka niezależna, nie tylko starocie), stare audycje radiowe. Kafle kolekcji +
- * wyszukiwarka globalna po `mediatype:audio`.
+ * (współczesna muzyka niezależna, nie tylko starocie), podcasty, audiobooki, stare audycje
+ * radiowe. Chipy kategorii ([ArchiveCategory]) filtrują zarówno przeglądanie, jak i wyszukiwarkę
+ * tekstową; brak wybranej kategorii = "Dla Ciebie" (personalizacja) albo wyszukiwanie globalne.
  */
 @Composable
 fun ArchiveScreen(
@@ -80,14 +77,16 @@ fun ArchiveScreen(
     val tokens = LocalAuroraTokens.current
 
     var searchQuery by remember { mutableStateOf("") }
-    var selectedCollection by remember { mutableStateOf<String?>(PERSONALIZED_TILE) }
+    // null = "Dla Ciebie" (personalizacja) — brak wybranej kategorii, patrz LaunchedEffect niżej.
+    var selectedCategory by remember { mutableStateOf<ArchiveCategory?>(null) }
 
     LaunchedEffect(Unit) { viewModel.loadPersonalizedArchive() }
 
-    fun selectCollection(collection: String) {
+    fun toggleCategory(category: ArchiveCategory) {
         searchQuery = ""
-        selectedCollection = collection
-        if (collection == PERSONALIZED_TILE) viewModel.loadPersonalizedArchive() else viewModel.browseArchiveCollection(collection)
+        val newSelection = if (selectedCategory == category) null else category
+        selectedCategory = newSelection
+        if (newSelection == null) viewModel.loadPersonalizedArchive() else viewModel.browseArchiveCategory(newSelection)
     }
 
     Column(modifier = modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
@@ -113,16 +112,16 @@ fun ArchiveScreen(
             value = searchQuery,
             onValueChange = { searchQuery = it },
             singleLine = true,
-            placeholder = { Text("Szukaj w archiwum") },
+            placeholder = { Text("Szukaj w archiwum (np. #pl #rap)") },
             leadingIcon = { Icon(imageVector = Icons.Filled.Search, contentDescription = null) },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
             keyboardActions = KeyboardActions(
                 onSearch = {
                     if (searchQuery.isBlank()) {
-                        selectedCollection?.let { selectCollection(it) }
+                        val category = selectedCategory
+                        if (category == null) viewModel.loadPersonalizedArchive() else viewModel.browseArchiveCategory(category)
                     } else {
-                        selectedCollection = null
-                        viewModel.searchArchive(searchQuery)
+                        viewModel.searchArchive(searchQuery, selectedCategory)
                     }
                 },
             ),
@@ -137,11 +136,11 @@ fun ArchiveScreen(
             contentPadding = PaddingValues(horizontal = tokens.spacing.m),
             horizontalArrangement = Arrangement.spacedBy(tokens.spacing.s),
         ) {
-            items(COLLECTION_TILES) { tile ->
+            items(CATEGORY_LABELS.entries.toList()) { (category, label) ->
                 CollectionChip(
-                    label = tile.label,
-                    selected = selectedCollection == tile.collection,
-                    onClick = { selectCollection(tile.collection) },
+                    label = label,
+                    selected = selectedCategory == category,
+                    onClick = { toggleCategory(category) },
                 )
             }
         }

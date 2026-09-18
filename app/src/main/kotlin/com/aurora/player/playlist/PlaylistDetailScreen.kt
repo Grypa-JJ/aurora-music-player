@@ -193,6 +193,7 @@ fun PlaylistDetailScreen(
                                     onClick = { viewModel.onPlayTracks(tracks, index) },
                                     onMoreClick = { trackForMenu = track },
                                     isCloudTrack = track.source == TrackSource.CLOUD,
+                                    isSavedOffline = track.source == TrackSource.ARCHIVE,
                                     modifier = Modifier.weight(1f),
                                 )
                                 Icon(

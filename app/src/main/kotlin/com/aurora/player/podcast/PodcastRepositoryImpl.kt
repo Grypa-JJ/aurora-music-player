@@ -71,24 +71,41 @@ class PodcastRepositoryImpl @Inject constructor(
         )
     }
 
-    private fun fetchXml(url: String): String? = try {
-        val request = Request.Builder().url(url).header("User-Agent", "AuroraMusicPlayer/1.0").build()
-        httpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                Log.e(TAG, "fetchXml(): HTTP ${response.code} dla $url")
-                null
-            } else {
-                response.body?.string()
+    /**
+     * Duże feedy (np. JRE: ~5MB/2700+ odcinków, gzipowane) czasem obrywają przejściowym błędem
+     * sieci w trakcie ściągania (np. `DataFormatException: invalid block type` — urwany/uszkodzony
+     * strumień gzip), nie tylko przy złym URL-u. Bez retry jeden taki zonk = trwałe "Brak odcinków"
+     * mimo że feed jest sprawny (zweryfikowane ręcznie — ten sam feed, ten sam parser, drugie
+     * podejście się udaje). 3 próby, krótki odstęp — już na wątku IO, więc blokujące `Thread.sleep`
+     * jest tu tak samo bezpieczne jak reszta tego pliku.
+     */
+    private fun fetchXml(url: String): String? {
+        var lastError: Exception? = null
+        repeat(MAX_FETCH_ATTEMPTS) { attempt ->
+            try {
+                val request = Request.Builder().url(url).header("User-Agent", "AuroraMusicPlayer/1.0").build()
+                httpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        Log.e(TAG, "fetchXml(): HTTP ${response.code} dla $url (próba ${attempt + 1})")
+                    } else {
+                        return response.body?.string()
+                    }
+                }
+            } catch (e: Exception) {
+                lastError = e
+                Log.e(TAG, "fetchXml(): błąd sieci dla $url (próba ${attempt + 1}/$MAX_FETCH_ATTEMPTS)", e)
             }
+            if (attempt < MAX_FETCH_ATTEMPTS - 1) Thread.sleep(FETCH_RETRY_DELAY_MS)
         }
-    } catch (e: Exception) {
-        Log.e(TAG, "fetchXml(): błąd sieci dla $url", e)
-        null
+        lastError?.let { Log.e(TAG, "fetchXml(): wszystkie próby nieudane dla $url", it) }
+        return null
     }
 
     private fun PodcastSubscriptionEntity.toPodcast() = Podcast(feedUrl, title, author, artworkUrl, description)
 
     private companion object {
         const val TAG = "PodcastRepositoryImpl"
+        const val MAX_FETCH_ATTEMPTS = 3
+        const val FETCH_RETRY_DELAY_MS = 500L
     }
 }

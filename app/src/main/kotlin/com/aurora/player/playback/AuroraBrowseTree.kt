@@ -8,6 +8,8 @@ import androidx.media3.session.MediaConstants
 import com.aurora.player.domain.model.GeniusMix
 import com.aurora.player.domain.model.Podcast
 import com.aurora.player.domain.model.PodcastEpisode
+import com.aurora.player.domain.model.Track
+import com.aurora.player.domain.repository.ArchiveRepository
 import com.aurora.player.domain.repository.FavoritesRepository
 import com.aurora.player.domain.repository.GeniusRepository
 import com.aurora.player.domain.repository.PlaybackHistoryRepository
@@ -65,9 +67,19 @@ class AuroraBrowseTree @Inject constructor(
     private val favoritesRepository: FavoritesRepository,
     private val podcastRepository: PodcastRepository,
     private val playbackHistoryRepository: PlaybackHistoryRepository,
+    private val archiveRepository: ArchiveRepository,
 ) {
     @Volatile
     private var cachedGeniusMixes: List<GeniusMix>? = null
+
+    /**
+     * "Lokalne" dla Android Auto = odtwarzalne bez sieci, NIE "zeskanowane przez MediaStore" —
+     * ścieżki z Archiwum pobrane na stałe ([ArchiveRepository.library]) są realnymi plikami na
+     * dysku, dokładnie jak `trackRepository.getAllTracks()`, więc należą do tego samego zbioru w
+     * CAŁYM drzewie (nie tylko w Geniusie). Google Drive/WebDAV celowo NIE są tu dołączone —
+     * wymagają sieci przy każdym odtworzeniu, czego offline-pierwsze przeglądanie w aucie unika.
+     */
+    private suspend fun localTracks(): List<Track> = trackRepository.getAllTracks() + archiveRepository.library.value
 
     fun rootItem(): MediaItem = folderItem(
         id = AuroraMediaIds.ROOT,
@@ -97,7 +109,7 @@ class AuroraBrowseTree @Inject constructor(
         // Odcinek podkastu wymagałby przeszukania RSS wszystkich subskrypcji (drogie) — świadomie
         // pominięte, dopóki nic realnie nie wywołuje onGetItem na pojedynczym odcinku.
         mediaId.startsWith(AuroraMediaIds.PODCAST_EPISODE_PREFIX) -> null
-        else -> trackRepository.getAllTracks().find { it.id.toString() == mediaId }?.toMediaItem()
+        else -> localTracks().find { it.id.toString() == mediaId }?.toMediaItem()
     }
 
     /** `null` = nieznany rodzic (błąd), pusta lista = znany, ale bez zawartości. */
@@ -122,7 +134,7 @@ class AuroraBrowseTree @Inject constructor(
     suspend fun search(query: String): List<MediaItem> {
         if (query.isBlank()) return emptyList()
         val needle = query.trim()
-        return trackRepository.getAllTracks()
+        return localTracks()
             .filter {
                 it.title.contains(needle, ignoreCase = true) ||
                     it.artist.contains(needle, ignoreCase = true) ||
@@ -139,8 +151,13 @@ class AuroraBrowseTree @Inject constructor(
         return mixes.getOrNull(index)?.tracks?.map { it.toMediaItem() }
     }
 
+    // Genius dostaje ten sam localTracks() (lokalne pliki + pobrane na stałe z Archiwum) co reszta
+    // drzewa — patrz KDoc [localTracks] — NIE LibraryViewModel.uiState.allTracks (to dociągnęłoby
+    // Drive/WebDAV, których Android Auto świadomie unika, bo wymagają sieci przy odtworzeniu).
     private suspend fun geniusMixes() =
-        cachedGeniusMixes ?: geniusRepository.generateGeniusMixes().also { cachedGeniusMixes = it }
+        cachedGeniusMixes ?: geniusRepository.generateGeniusMixes(localTracks()).also {
+            cachedGeniusMixes = it
+        }
 
     private fun rootChildren(): List<MediaItem> = listOf(
         folderItem(AuroraMediaIds.GENIUS_ROOT, "Genius", browsableStyle = GRID, playable = false),
@@ -152,7 +169,7 @@ class AuroraBrowseTree @Inject constructor(
     private suspend fun geniusChildren(): List<MediaItem> {
         val items = mutableListOf<MediaItem>()
         playbackHistoryRepository.getLastPlayedTrackId()?.let { lastTrackId ->
-            trackRepository.getAllTracks().find { it.id == lastTrackId }?.let { track ->
+            localTracks().find { it.id == lastTrackId }?.let { track ->
                 items += track.copy(title = "Kontynuuj: ${track.title}").toMediaItem()
             }
         }
@@ -176,17 +193,17 @@ class AuroraBrowseTree @Inject constructor(
 
     private suspend fun favoriteTrackItems(): List<MediaItem> {
         val favoriteIds = favoritesRepository.favoriteTrackIds.value
-        return trackRepository.getAllTracks()
+        return localTracks()
             .filter { it.id in favoriteIds }
             .sortedBy { it.title.lowercase() }
             .map { it.toMediaItem() }
     }
 
     private suspend fun allTrackItems(): List<MediaItem> =
-        trackRepository.getAllTracks().sortedBy { it.title.lowercase() }.map { it.toMediaItem() }
+        localTracks().sortedBy { it.title.lowercase() }.map { it.toMediaItem() }
 
     private suspend fun albumItems(): List<MediaItem> =
-        groupTracksByAlbum(trackRepository.getAllTracks()).map { group ->
+        groupTracksByAlbum(localTracks()).map { group ->
             folderItem(
                 id = AuroraMediaIds.LIBRARY_ALBUM_PREFIX + encodeKey("${group.name}|||${group.artist}"),
                 title = group.name,
@@ -198,14 +215,14 @@ class AuroraBrowseTree @Inject constructor(
     private suspend fun albumTrackItems(parentId: String): List<MediaItem>? {
         val key = decodeKey(parentId.removePrefix(AuroraMediaIds.LIBRARY_ALBUM_PREFIX))
         val (name, artist) = key.split("|||", limit = 2).let { it.getOrElse(0) { "" } to it.getOrElse(1) { "" } }
-        return groupTracksByAlbum(trackRepository.getAllTracks())
+        return groupTracksByAlbum(localTracks())
             .find { it.name == name && it.artist == artist }
             ?.tracks
             ?.map { it.toMediaItem() }
     }
 
     private suspend fun artistItems(): List<MediaItem> =
-        groupTracksByArtist(trackRepository.getAllTracks()).map { group ->
+        groupTracksByArtist(localTracks()).map { group ->
             folderItem(
                 id = AuroraMediaIds.LIBRARY_ARTIST_PREFIX + encodeKey(group.name),
                 title = group.name,
@@ -214,7 +231,7 @@ class AuroraBrowseTree @Inject constructor(
 
     private suspend fun artistTrackItems(parentId: String): List<MediaItem>? {
         val name = decodeKey(parentId.removePrefix(AuroraMediaIds.LIBRARY_ARTIST_PREFIX))
-        return groupTracksByArtist(trackRepository.getAllTracks())
+        return groupTracksByArtist(localTracks())
             .find { it.name == name }
             ?.tracks
             ?.sortedBy { it.title.lowercase() }
@@ -229,7 +246,7 @@ class AuroraBrowseTree @Inject constructor(
     private suspend fun playlistTrackItems(parentId: String): List<MediaItem>? {
         val playlistId = parentId.removePrefix(AuroraMediaIds.PLAYLIST_PREFIX).toLongOrNull() ?: return null
         val playlist = playlistRepository.playlists.value.find { it.id == playlistId } ?: return null
-        val tracksById = trackRepository.getAllTracks().associateBy { it.id }
+        val tracksById = localTracks().associateBy { it.id }
         return playlist.trackIds.mapNotNull { tracksById[it] }.map { it.toMediaItem() }
     }
 

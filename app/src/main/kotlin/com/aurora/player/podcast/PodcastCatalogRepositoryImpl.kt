@@ -156,14 +156,28 @@ class PodcastCatalogRepositoryImpl @Inject constructor(
             rankedIds.mapNotNull { resultById[it] }
         }
 
-    private fun get(url: String): String? = try {
-        val request = Request.Builder().url(url).header("User-Agent", "AuroraMusicPlayer/1.0").build()
-        httpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) null else response.body?.string()
+    /**
+     * Przejściowe błędy sieci (urwane/uszkodzone połączenie, "unexpected end of stream" itp.) —
+     * ten sam problem i to samo rozwiązanie co `PodcastRepositoryImpl.fetchXml()` (patrz jego
+     * KDoc/DESIGN.md): jeden zonk sieci nie powinien trwale wygaszać "Podkasty dla Ciebie" na Home.
+     */
+    private fun get(url: String): String? {
+        var lastError: Exception? = null
+        repeat(MAX_FETCH_ATTEMPTS) { attempt ->
+            try {
+                val request = Request.Builder().url(url).header("User-Agent", "AuroraMusicPlayer/1.0").build()
+                httpClient.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) return response.body?.string()
+                    Log.e(TAG, "get(): HTTP ${response.code} dla $url (próba ${attempt + 1})")
+                }
+            } catch (e: Exception) {
+                lastError = e
+                Log.e(TAG, "get(): błąd sieci dla $url (próba ${attempt + 1}/$MAX_FETCH_ATTEMPTS)", e)
+            }
+            if (attempt < MAX_FETCH_ATTEMPTS - 1) Thread.sleep(FETCH_RETRY_DELAY_MS)
         }
-    } catch (e: Exception) {
-        Log.e(TAG, "get(): błąd sieci dla $url", e)
-        null
+        lastError?.let { Log.e(TAG, "get(): wszystkie próby nieudane dla $url", it) }
+        return null
     }
 
     private fun sha1Hex(input: String): String {
@@ -173,5 +187,7 @@ class PodcastCatalogRepositoryImpl @Inject constructor(
 
     private companion object {
         const val TAG = "PodcastCatalogRepo"
+        const val MAX_FETCH_ATTEMPTS = 3
+        const val FETCH_RETRY_DELAY_MS = 500L
     }
 }

@@ -113,6 +113,15 @@ dependencies {
     implementation(libs.reorderable)
 
     implementation(libs.coil.compose)
+    // Etap 45, zgłoszenie: okładki podkastów/Archiwum/audiobooków na Home nigdy się nie
+    // ładowały — Coil 3 (w przeciwieństwie do Coil 2) NIE ma domyślnie żadnego fetchera dla
+    // http(s)://, `coil-network-okhttp` trzeba dodać JAWNIE (patrz oficjalny przewodnik migracji:
+    // "coil-core no longer supports loading images from the network by default"). Bez tego każdy
+    // AsyncImage z URL-em sieciowym cicho nic nie renderował — Coil nie loguje błędu, po prostu
+    // nie ma czym obsłużyć żądania. Lokalne okładki (`content://`/`file://`, LocalAlbumArtRepository,
+    // Etap 42/44) działały cały czas, bo te fetchery SĄ wbudowane w coil-core — to właśnie
+    // maskowało ten brak przez większość sesji.
+    implementation(libs.coil.network.okhttp)
     implementation(libs.haze)
     implementation(libs.haze.materials)
 
