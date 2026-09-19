@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -33,10 +34,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -64,6 +64,12 @@ private val CATEGORY_LABELS = linkedMapOf(
  * (współczesna muzyka niezależna, nie tylko starocie), podcasty, audiobooki, stare audycje
  * radiowe. Chipy kategorii ([ArchiveCategory]) filtrują zarówno przeglądanie, jak i wyszukiwarkę
  * tekstową; brak wybranej kategorii = "Dla Ciebie" (personalizacja) albo wyszukiwanie globalne.
+ *
+ * Etap 51 (zgłoszenie): wyszukiwanie/kategoria/wyniki żyją teraz w `LibraryViewModel`, nie lokalnie
+ * — powrót z `ArchiveItemDetailScreen` (push/pop w Compose Navigation kasuje i odtwarza tę
+ * kompozycję) nie zeruje już wpisanego zapytania. Doszły też: podpowiedzi wykonawców z lokalnej
+ * biblioteki pod wpisywanym tekstem, i doładowywanie kolejnej strony przy przewinięciu do końca
+ * listy (`loadMoreArchiveItems`) zamiast sztywnego limitu.
  */
 @Composable
 fun ArchiveScreen(
@@ -74,19 +80,26 @@ fun ArchiveScreen(
 ) {
     val items by viewModel.archiveItems.collectAsState()
     val isLoading by viewModel.isLoadingArchive.collectAsState()
+    val isLoadingMore by viewModel.isLoadingMoreArchive.collectAsState()
+    val canLoadMore by viewModel.archiveCanLoadMore.collectAsState()
+    val searchQuery by viewModel.archiveSearchQuery.collectAsState()
+    val selectedCategory by viewModel.archiveSelectedCategory.collectAsState()
     val tokens = LocalAuroraTokens.current
 
-    var searchQuery by remember { mutableStateOf("") }
-    // null = "Dla Ciebie" (personalizacja) — brak wybranej kategorii, patrz LaunchedEffect niżej.
-    var selectedCategory by remember { mutableStateOf<ArchiveCategory?>(null) }
+    LaunchedEffect(Unit) { viewModel.ensureArchiveLoaded() }
 
-    LaunchedEffect(Unit) { viewModel.loadPersonalizedArchive() }
+    val suggestions = remember(searchQuery) { viewModel.archiveArtistSuggestions(searchQuery) }
 
-    fun toggleCategory(category: ArchiveCategory) {
-        searchQuery = ""
-        val newSelection = if (selectedCategory == category) null else category
-        selectedCategory = newSelection
-        if (newSelection == null) viewModel.loadPersonalizedArchive() else viewModel.browseArchiveCategory(newSelection)
+    val listState = rememberLazyListState()
+    val shouldLoadMore by remember {
+        derivedStateOf {
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            val totalCount = listState.layoutInfo.totalItemsCount
+            totalCount > 0 && lastVisible >= totalCount - 3
+        }
+    }
+    LaunchedEffect(shouldLoadMore, canLoadMore, isLoading) {
+        if (shouldLoadMore && canLoadMore && !isLoading) viewModel.loadMoreArchiveItems()
     }
 
     Column(modifier = modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
@@ -110,27 +123,39 @@ fun ArchiveScreen(
 
         OutlinedTextField(
             value = searchQuery,
-            onValueChange = { searchQuery = it },
+            onValueChange = { viewModel.onArchiveSearchQueryChange(it) },
             singleLine = true,
             placeholder = { Text("Szukaj w archiwum (np. #pl #rap)") },
             leadingIcon = { Icon(imageVector = Icons.Filled.Search, contentDescription = null) },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(
-                onSearch = {
-                    if (searchQuery.isBlank()) {
-                        val category = selectedCategory
-                        if (category == null) viewModel.loadPersonalizedArchive() else viewModel.browseArchiveCategory(category)
-                    } else {
-                        viewModel.searchArchive(searchQuery, selectedCategory)
-                    }
-                },
-            ),
+            keyboardActions = KeyboardActions(onSearch = { viewModel.onArchiveSearchSubmit() }),
             shape = RoundedCornerShape(999.dp),
             colors = OutlinedTextFieldDefaults.colors(
                 unfocusedBorderColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.15f),
             ),
             modifier = Modifier.fillMaxWidth().padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s),
         )
+
+        // Podpowiedzi wykonawców z lokalnej biblioteki (patrz KDoc ekranu) — tap wypełnia pole i od
+        // razu szuka, bo to jedyny sensowny następny krok po wybraniu konkretnego wykonawcy.
+        if (suggestions.isNotEmpty()) {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = tokens.spacing.m),
+                horizontalArrangement = Arrangement.spacedBy(tokens.spacing.s),
+                modifier = Modifier.padding(bottom = tokens.spacing.s),
+            ) {
+                items(suggestions) { artist ->
+                    CollectionChip(
+                        label = artist,
+                        selected = false,
+                        onClick = {
+                            viewModel.onArchiveSearchQueryChange(artist)
+                            viewModel.onArchiveSearchSubmit()
+                        },
+                    )
+                }
+            }
+        }
 
         LazyRow(
             contentPadding = PaddingValues(horizontal = tokens.spacing.m),
@@ -140,7 +165,7 @@ fun ArchiveScreen(
                 CollectionChip(
                     label = label,
                     selected = selectedCategory == category,
-                    onClick = { toggleCategory(category) },
+                    onClick = { viewModel.onToggleArchiveCategory(category) },
                 )
             }
         }
@@ -164,13 +189,23 @@ fun ArchiveScreen(
             }
 
             else -> {
-                LazyColumn(contentPadding = PaddingValues(horizontal = tokens.spacing.m, vertical = tokens.spacing.s)) {
+                LazyColumn(
+                    state = listState,
+                    contentPadding = PaddingValues(horizontal = tokens.spacing.m, vertical = tokens.spacing.s),
+                ) {
                     items(items, key = { it.identifier }) { item ->
                         ArchiveItemRow(
                             item = item,
                             onClick = { onOpenItem(item.identifier) },
                             modifier = Modifier.padding(bottom = tokens.spacing.m),
                         )
+                    }
+                    if (isLoadingMore) {
+                        item {
+                            Box(modifier = Modifier.fillMaxWidth().padding(tokens.spacing.m), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
                     }
                 }
             }

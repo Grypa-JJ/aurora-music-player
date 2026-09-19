@@ -1,12 +1,18 @@
 package com.aurora.player.domain.model
 
-/** Pozycja w Internet Archive (koncert/nagranie/audycja) — jeden "item" może mieć wiele ścieżek audio. */
+/**
+ * Pozycja w Internet Archive (koncert/nagranie/audycja) — jeden "item" może mieć wiele ścieżek audio.
+ * [filesCount] to `files_count` z metadanych IA (liczba WSZYSTKICH plików w itemie — audio + pochodne
+ * miniatury/spektrogramy, nie sam licznik utworów) — używane jako przybliżenie "pojedyncza ścieżka vs
+ * pełny album" przy sortowaniu wyników (patrz `ArchiveRepositoryImpl.rankBySize`).
+ */
 data class ArchiveItem(
     val identifier: String,
     val title: String,
     val creator: String,
     val year: Int?,
     val coverUrl: String?,
+    val filesCount: Int = 0,
 )
 
 /** Jedna ścieżka audio wewnątrz [ArchiveItem], rozwiązana z `archive.org/metadata/{identifier}`. */

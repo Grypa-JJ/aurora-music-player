@@ -654,6 +654,88 @@ class LibraryViewModel @Inject constructor(
     private val _isLoadingArchive = MutableStateFlow(false)
     val isLoadingArchive: StateFlow<Boolean> = _isLoadingArchive.asStateFlow()
 
+    private val _isLoadingMoreArchive = MutableStateFlow(false)
+    val isLoadingMoreArchive: StateFlow<Boolean> = _isLoadingMoreArchive.asStateFlow()
+
+    /** `true` = jest sens wołać [loadMoreArchiveItems] ("nieskończone przewijanie" w UI). */
+    private val _archiveCanLoadMore = MutableStateFlow(false)
+    val archiveCanLoadMore: StateFlow<Boolean> = _archiveCanLoadMore.asStateFlow()
+
+    /**
+     * Zgłoszenie: `searchQuery`/`selectedCategory` żyły dotąd jako `remember{}` lokalnie w
+     * `ArchiveScreen` — Compose Navigation kasuje i odtwarza tę kompozycję przy przejściu na
+     * `ArchiveItemDetailScreen` i z powrotem, więc powrót zerował wyszukiwanie/kategorię, a
+     * `LaunchedEffect(Unit)` na świeżej kompozycji na nowo odpalał "Dla Ciebie", nadpisując wynik
+     * wyszukiwania. Stan żyje teraz tu, w ViewModelu, który przeżywa nawigację.
+     */
+    private val _archiveSearchQuery = MutableStateFlow("")
+    val archiveSearchQuery: StateFlow<String> = _archiveSearchQuery.asStateFlow()
+
+    private val _archiveSelectedCategory = MutableStateFlow<ArchiveCategory?>(null)
+    val archiveSelectedCategory: StateFlow<ArchiveCategory?> = _archiveSelectedCategory.asStateFlow()
+
+    fun onArchiveSearchQueryChange(query: String) {
+        _archiveSearchQuery.value = query
+    }
+
+    /** Kontekst ostatnio wykonanego przeglądania/wyszukiwania — do doładowania kolejnej strony, patrz [loadMoreArchiveItems]. */
+    private sealed interface ArchiveBrowseContext {
+        data object Personalized : ArchiveBrowseContext
+        data class Category(val category: ArchiveCategory) : ArchiveBrowseContext
+        data class Search(val query: String, val category: ArchiveCategory?) : ArchiveBrowseContext
+    }
+
+    private var archiveBrowseContext: ArchiveBrowseContext = ArchiveBrowseContext.Personalized
+
+    /**
+     * Wołane raz przy wejściu na ekran Archiwum. Ładuje "Dla Ciebie" TYLKO gdy naprawdę nic jeszcze
+     * nie było wyszukane/przeglądane w tej sesji (świeże wejście) — inaczej powrót z nawigacji
+     * nadpisywałby wynik wyszukiwania/kategorię, którą user już miał na ekranie (patrz KDoc wyżej).
+     */
+    fun ensureArchiveLoaded() {
+        if (_archiveSearchQuery.value.isBlank() && _archiveSelectedCategory.value == null && _archiveItems.value.isEmpty()) {
+            loadPersonalizedArchive()
+        }
+    }
+
+    fun onToggleArchiveCategory(category: ArchiveCategory) {
+        _archiveSearchQuery.value = ""
+        val newSelection = if (_archiveSelectedCategory.value == category) null else category
+        _archiveSelectedCategory.value = newSelection
+        if (newSelection == null) loadPersonalizedArchive() else browseArchiveCategory(newSelection)
+    }
+
+    /** Odpalane z klawiatury (IME Search) w `ArchiveScreen` — czyta bieżący [archiveSearchQuery]/[archiveSelectedCategory]. */
+    fun onArchiveSearchSubmit() {
+        val query = _archiveSearchQuery.value
+        val category = _archiveSelectedCategory.value
+        if (query.isBlank()) {
+            if (category == null) loadPersonalizedArchive() else browseArchiveCategory(category)
+        } else {
+            searchArchive(query, category)
+        }
+    }
+
+    /**
+     * Podpowiedzi wykonawców pod wpisywany tekst w wyszukiwarce Archiwum — user: "algo, które
+     * proponuje nazwę artysty". Świadomie TYLKO z lokalnej biblioteki (bez sieci, bez zapytań do
+     * archive.org) — to i tak jedyni wykonawcy, których wyszukanie w Archiwum ma szansę coś
+     * znaczącego zwrócić (patrz [computeLocalTaste]), więc podpowiadanie kogokolwiek innego
+     * wprowadzałoby w błąd.
+     */
+    fun archiveArtistSuggestions(prefix: String): List<String> {
+        if (prefix.trim().length < 2) return emptyList()
+        val normalized = prefix.trim().lowercase()
+        return _uiState.value.allTracks
+            .asSequence()
+            .map { it.artist }
+            .filter { it.isNotBlank() && it.lowercase().contains(normalized) }
+            .distinct()
+            .sortedBy { it.length }
+            .take(5)
+            .toList()
+    }
+
     /**
      * Gust wyprowadzony z CAŁEJ lokalnej biblioteki (wykonawca + gatunek), z ulubionymi liczonymi
      * [FAVORITE_TASTE_WEIGHT] razy mocniej niż zwykła obecność w bibliotece — tak cała zawartość
@@ -702,6 +784,7 @@ class LibraryViewModel @Inject constructor(
      * fallback na zwykłe [ArchiveRepository.browseCategory], teraz też posortowane po popularności.
      */
     fun browseArchiveCategory(category: ArchiveCategory) {
+        archiveBrowseContext = ArchiveBrowseContext.Category(category)
         viewModelScope.launch {
             _isLoadingArchive.value = true
             val (topArtists, topGenres) = computeLocalTaste()
@@ -710,7 +793,9 @@ class LibraryViewModel @Inject constructor(
             } else {
                 emptyList()
             }
-            _archiveItems.value = personalized.ifEmpty { archiveRepository.browseCategory(category) }
+            val result = personalized.ifEmpty { archiveRepository.browseCategory(category) }
+            _archiveItems.value = result
+            _archiveCanLoadMore.value = result.isNotEmpty()
             _isLoadingArchive.value = false
         }
     }
@@ -727,6 +812,7 @@ class LibraryViewModel @Inject constructor(
      * [browseArchiveCategory]) łapie ten przypadek zamiast pokazać pustą sekcję.
      */
     fun loadPersonalizedArchive() {
+        archiveBrowseContext = ArchiveBrowseContext.Personalized
         viewModelScope.launch {
             val (topArtists, topGenres) = computeLocalTaste()
             _isLoadingArchive.value = true
@@ -736,15 +822,47 @@ class LibraryViewModel @Inject constructor(
                 emptyList()
             }
             _archiveItems.value = personalized.ifEmpty { archiveRepository.topPopular() }
+            // Kuratorowany, stały zestaw (kilka zapytań połączonych + distinctBy) — nie doładowujemy
+            // kolejnych stron tutaj, tylko przy kategorii/wyszukiwaniu (patrz loadMoreArchiveItems).
+            _archiveCanLoadMore.value = false
             _isLoadingArchive.value = false
         }
     }
 
     fun searchArchive(query: String, category: ArchiveCategory? = null) {
+        archiveBrowseContext = ArchiveBrowseContext.Search(query, category)
         viewModelScope.launch {
             _isLoadingArchive.value = true
-            _archiveItems.value = archiveRepository.search(query, category)
+            val result = archiveRepository.search(query, category)
+            _archiveItems.value = result
+            _archiveCanLoadMore.value = result.isNotEmpty()
             _isLoadingArchive.value = false
+        }
+    }
+
+    /**
+     * "Nieskończone przewijanie" (zgłoszenie: "stale 20 pozycji, jak się skończą niech doładują się
+     * następne") — doładowuje kolejną stronę tego, co user AKTUALNIE przegląda (kategoria/
+     * wyszukiwanie, patrz [archiveBrowseContext]) i dokleja do [archiveItems] zamiast zastępować.
+     * "Dla Ciebie" świadomie pominięte, patrz [loadPersonalizedArchive]. `distinctBy` na wypadek, gdy
+     * strona 1 przyszła z `personalizedForCategory`, a strona 2 z gołego `browseCategory` — te dwie
+     * ścieżki mogą się nieznacznie nakładać.
+     */
+    fun loadMoreArchiveItems() {
+        if (_isLoadingMoreArchive.value || !_archiveCanLoadMore.value) return
+        val context = archiveBrowseContext
+        if (context is ArchiveBrowseContext.Personalized) return
+        viewModelScope.launch {
+            _isLoadingMoreArchive.value = true
+            val offset = _archiveItems.value.size
+            val more = when (context) {
+                is ArchiveBrowseContext.Category -> archiveRepository.browseCategory(context.category, offset = offset)
+                is ArchiveBrowseContext.Search -> archiveRepository.search(context.query, context.category, offset = offset)
+                ArchiveBrowseContext.Personalized -> emptyList()
+            }
+            _archiveItems.value = (_archiveItems.value + more).distinctBy { it.identifier }
+            _archiveCanLoadMore.value = more.isNotEmpty()
+            _isLoadingMoreArchive.value = false
         }
     }
 

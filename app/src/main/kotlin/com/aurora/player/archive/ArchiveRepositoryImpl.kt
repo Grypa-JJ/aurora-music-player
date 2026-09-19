@@ -145,14 +145,14 @@ class ArchiveRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun browseCategory(category: ArchiveCategory, limit: Int): List<ArchiveItem> =
+    override suspend fun browseCategory(category: ArchiveCategory, limit: Int, offset: Int): List<ArchiveItem> =
         withContext(Dispatchers.IO) {
-            itemsCache.getOrPut("category:$category:$limit") {
+            itemsCache.getOrPut("category:$category:$limit:$offset") {
                 // Etap 46, zgłoszenie: było `sort = "date+desc"` (najnowsze UPLOADY) — na Internet
                 // Archive każdy może wgrać cokolwiek w dowolnej chwili, więc "najnowsze" to głównie
                 // szum (testowe pliki, przypadkowe nazwy), nie coś wartego pokazania. `downloads+desc`
                 // to ten sam sygnał popularności, którego już używa [topPopular]/[personalizedForYou].
-                fetchItems("${category.collectionQuery()} AND mediatype:audio", limit, sort = "downloads+desc")
+                fetchItems("${category.collectionQuery()} AND mediatype:audio", limit, sort = "downloads+desc", start = offset)
             }
         }
 
@@ -189,7 +189,7 @@ class ArchiveRepositoryImpl @Inject constructor(
         }
     }
 
-    override suspend fun search(query: String, category: ArchiveCategory?, limit: Int): List<ArchiveItem> {
+    override suspend fun search(query: String, category: ArchiveCategory?, limit: Int, offset: Int): List<ArchiveItem> {
         if (query.isBlank()) return emptyList()
         return withContext(Dispatchers.IO) {
             val trimmed = query.trim()
@@ -200,8 +200,15 @@ class ArchiveRepositoryImpl @Inject constructor(
             val clauses = listOfNotNull(textClause) + tagClauses
             if (clauses.isEmpty()) return@withContext emptyList()
             val categoryFilter = category?.let { "${it.collectionQuery()} AND " }.orEmpty()
-            itemsCache.getOrPut("search:$category:$trimmed:$limit") {
-                fetchItems("${categoryFilter}mediatype:audio AND (${clauses.joinToString(" AND ")})", limit, sort = null)
+            itemsCache.getOrPut("search:$category:$trimmed:$limit:$offset") {
+                // `sort = null` = domyślna trafność IA (nie downloads+desc) — free-text search ma
+                // faworyzować dopasowanie do zapytania, nie samą popularność.
+                fetchItems(
+                    "${categoryFilter}mediatype:audio AND (${clauses.joinToString(" AND ")})",
+                    limit,
+                    sort = null,
+                    start = offset,
+                )
             }
         }
     }
@@ -321,11 +328,12 @@ class ArchiveRepositoryImpl @Inject constructor(
         return GENRE_TO_COLLECTIONS.entries.firstOrNull { (keyword, _) -> normalized.contains(keyword) }?.value
     }
 
-    private fun fetchItems(query: String, limit: Int, sort: String?): List<ArchiveItem> {
-        val fields = "identifier,title,creator,year,collection"
+    private fun fetchItems(query: String, limit: Int, sort: String?, start: Int = 0): List<ArchiveItem> {
+        val fields = "identifier,title,creator,year,collection,files_count"
         val sortParam = sort?.let { "&sort[]=$it" }.orEmpty()
+        val startParam = if (start > 0) "&start=$start" else ""
         val url = "$SEARCH_URL?q=${URLEncoder.encode(query, "UTF-8")}" +
-            "&fl[]=${fields.replace(",", "&fl[]=")}&rows=$limit&output=json$sortParam"
+            "&fl[]=${fields.replace(",", "&fl[]=")}&rows=$limit&output=json$sortParam$startParam"
         val json = fetchJson(url) ?: return emptyList()
         val docs = try {
             JSONObject(json).optJSONObject("response")?.optJSONArray("docs") ?: return emptyList()
@@ -343,10 +351,29 @@ class ArchiveRepositoryImpl @Inject constructor(
                 creator = doc.opt("creator").toDisplayString(),
                 year = doc.optString("year").toIntOrNull(),
                 coverUrl = "https://archive.org/services/img/$identifier",
+                filesCount = doc.optInt("files_count", 0),
             )
         }
-        return items
+        return rankBySize(items)
     }
+
+    /**
+     * Zgłoszenie: pojedyncze ścieżki (mało plików w itemie) mają dostawać "minus punkty", pełne
+     * albumy "plus punkty", żeby wypływały wyżej. IA nie ma osobnego pola "to jest album", ale
+     * [ArchiveItem.filesCount] (audio + pochodne miniatury/spektrogramy na plik) jest tanim proxy —
+     * pojedynczy utwór to zwykle 2-4 pliki (audio + miniatura/spektrogram), pełny album/koncert to
+     * kilkanaście-kilkadziesiąt. Sortowanie STABILNE — w obrębie tego samego "kubełka" rozmiaru
+     * zostaje oryginalna kolejność z IA (trafność/popularność), zmienia się tylko priorytet między
+     * kubełkami.
+     */
+    private fun rankBySize(items: List<ArchiveItem>): List<ArchiveItem> =
+        items.sortedByDescending { item ->
+            when {
+                item.filesCount in 1..SINGLE_TRACK_MAX_FILES -> -1
+                item.filesCount >= FULL_ALBUM_MIN_FILES -> 1
+                else -> 0
+            }
+        }
 
     private fun fetchTracks(identifier: String): List<ArchiveTrack> {
         val json = fetchJson("$METADATA_URL/$identifier") ?: return emptyList()
@@ -436,6 +463,10 @@ class ArchiveRepositoryImpl @Inject constructor(
         const val MAX_TASTE_ARTISTS = 5
         const val MAX_TASTE_GENRES = 3
         const val PER_QUERY_LIMIT = 8
+
+        /** Patrz [rankBySize] — progi `files_count` do rozróżnienia pojedynczej ścieżki od pełnego albumu. */
+        const val SINGLE_TRACK_MAX_FILES = 4
+        const val FULL_ALBUM_MIN_FILES = 8
 
         /** Priorytet formatów audio (indeks = ranga, niższy = lepszy) — nigdy surowy FLAC jako domyślny. */
         val AUDIO_FORMAT_PRIORITY = listOf(

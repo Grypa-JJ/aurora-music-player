@@ -9,7 +9,8 @@ import kotlinx.coroutines.flow.StateFlow
 
 /** Internet Archive (`archive.org`) — koncerty na żywo, netlabele, stare radio. Zero kluczy API. */
 interface ArchiveRepository {
-    suspend fun browseCategory(category: ArchiveCategory, limit: Int = 50): List<ArchiveItem>
+    /** [offset] = strona wyników ("nieskończone przewijanie" w UI) — patrz `LibraryViewModel.loadMoreArchiveItems`. */
+    suspend fun browseCategory(category: ArchiveCategory, limit: Int = 50, offset: Int = 0): List<ArchiveItem>
 
     /**
      * Top pozycje wg liczby pobrań (`downloads+desc`), priorytetowo z regionu/języka urządzenia —
@@ -20,9 +21,9 @@ interface ArchiveRepository {
     /**
      * Wyszukiwanie po `mediatype:audio`, opcjonalnie zawężone do [category]. Tokeny zaczynające się
      * od `#` (np. `#pl`, `#rap`) są traktowane jak tagi — patrz implementacja dla mapowania na pola
-     * `subject:`/`language:` w metadanych Internet Archive.
+     * `subject:`/`language:` w metadanych Internet Archive. [offset] jak w [browseCategory].
      */
-    suspend fun search(query: String, category: ArchiveCategory? = null, limit: Int = 50): List<ArchiveItem>
+    suspend fun search(query: String, category: ArchiveCategory? = null, limit: Int = 50, offset: Int = 0): List<ArchiveItem>
 
     suspend fun tracksForItem(identifier: String): List<ArchiveTrack>
 
