@@ -23,6 +23,8 @@ fun PodcastEpisode.toTrack(podcast: Podcast): Track = Track(
     dateAddedMs = publishedAtMs,
     albumArtUri = podcast.artworkUrl,
     source = TrackSource.PODCAST,
+    transcriptUrl = transcriptUrl,
+    transcriptType = transcriptType,
 )
 
 private const val PODCAST_SOURCE_DISCRIMINATOR = "podcast"

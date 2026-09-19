@@ -53,7 +53,11 @@ import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -93,6 +97,8 @@ import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
 import com.aurora.player.domain.model.LyricsLine
 import com.aurora.player.domain.model.LyricsResult
+import com.aurora.player.domain.model.TranscriptResult
+import com.aurora.player.domain.model.TranslationResult
 import com.aurora.player.domain.model.RepeatMode
 import com.aurora.player.domain.model.TrackSource
 import com.aurora.player.eq.EqualizerSheet
@@ -113,7 +119,7 @@ import java.util.concurrent.TimeUnit
  * Okładka i Napisy są pomijane w cyklu, gdy nie ma czego pokazać (brak `albumArtUri`/tekstu) —
  * Wizualizer zawsze istnieje, więc cykl nigdy nie jest pusty.
  */
-private enum class NowPlayingChannel { AlbumArt, Visualizer, Lyrics }
+private enum class NowPlayingChannel { AlbumArt, Visualizer, Lyrics, Transcript }
 
 /**
  * Odtwarzacz pełnoekranowy — patrz DESIGN.md sekcja 3.2. Tło i akcent koloru są wyprowadzone
@@ -139,6 +145,11 @@ fun NowPlayingScreen(
     val palette by viewModel.albumArtPalette.collectAsState()
     val lyricsResult by viewModel.lyricsResult.collectAsState()
     val isLoadingLyrics by viewModel.isLoadingLyrics.collectAsState()
+    val transcriptResult by viewModel.transcriptResult.collectAsState()
+    val isLoadingTranscript by viewModel.isLoadingTranscript.collectAsState()
+    val translatedTranscript by viewModel.translatedTranscript.collectAsState()
+    val isTranslatingTranscript by viewModel.isTranslatingTranscript.collectAsState()
+    val isSpeakingTranslation by viewModel.isSpeakingTranslation.collectAsState()
     val favoriteTrackIds by viewModel.favoriteTrackIds.collectAsState()
     val tokens = LocalAuroraTokens.current
     val track = playbackState.currentTrack
@@ -184,12 +195,17 @@ fun NowPlayingScreen(
     var isFullscreen by remember { mutableStateOf(false) }
 
     val hasLyrics = lyricsResult is LyricsResult.Synced || lyricsResult is LyricsResult.Plain
-    // Kolejność kanałów w cyklu — DESIGN.md Etap 26: okładka → wizualizer → napisy. Pomija kanały
-    // bez treści (patrz enum wyżej); Wizualizer zawsze zostaje, więc lista nigdy nie jest pusta.
+    // Etap 54: transkrypcja podkastu — publikuje ją garstka feedów (`<podcast:transcript>`), więc
+    // kanał pojawia się TYLKO gdy faktycznie coś znaleziono, tak jak Napisy dla muzyki.
+    val hasTranscript = transcriptResult is TranscriptResult.Loaded
+    // Kolejność kanałów w cyklu — DESIGN.md Etap 26: okładka → wizualizer → napisy/transkrypcja.
+    // Pomija kanały bez treści (patrz enum wyżej); Wizualizer zawsze zostaje, więc lista nigdy nie
+    // jest pusta.
     val availableChannels = buildList {
         if (hasAlbumArt) add(NowPlayingChannel.AlbumArt)
         add(NowPlayingChannel.Visualizer)
         if (hasLyrics) add(NowPlayingChannel.Lyrics)
+        if (hasTranscript) add(NowPlayingChannel.Transcript)
     }
     val defaultChannel = if (hasAlbumArt) NowPlayingChannel.AlbumArt else NowPlayingChannel.Visualizer
 
@@ -451,7 +467,13 @@ fun NowPlayingScreen(
                 // Etap 26: kanał Napisy dostaje własne, jednolite tło w kolorze okładki ("nasze
                 // okno na świat" ma kopiować kolor albumu, zgłoszenie usera) zamiast domyślnego
                 // `surface` — ten sam `backgroundTop` co reszta ekranu, żeby paleta była spójna.
-                .background(if (channel == NowPlayingChannel.Lyrics) backgroundTop else MaterialTheme.colorScheme.surface)
+                .background(
+                    if (channel == NowPlayingChannel.Lyrics || channel == NowPlayingChannel.Transcript) {
+                        backgroundTop
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    },
+                )
                 .sharedElementOrSelf(sharedTransitionScope, animatedVisibilityScope, albumArtSharedKey)
                 // Etap 26: swipe pozioma zmienia kanał (okładka→wizualizer→napisy, cyklicznie) —
                 // tap na samym wizualizerze zostaje zajęty przez zmianę presetu ProjectM (patrz
@@ -542,6 +564,28 @@ fun NowPlayingScreen(
                         result = lyricsResult,
                         isLoading = isLoadingLyrics,
                         positionMs = playbackState.positionMs,
+                        accentColor = accentColor,
+                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(24.dp)),
+                    )
+                    CloseVisualizerButton(
+                        modifier = Modifier.align(Alignment.TopStart).padding(tokens.spacing.s),
+                        onClick = { channel = defaultChannel },
+                    )
+                    FullscreenExpandButton(
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(tokens.spacing.m),
+                        onClick = { isFullscreen = true },
+                    )
+                }
+                NowPlayingChannel.Transcript -> {
+                    TranscriptChannelContent(
+                        result = transcriptResult,
+                        isLoading = isLoadingTranscript,
+                        translated = translatedTranscript,
+                        isTranslating = isTranslatingTranscript,
+                        isSpeaking = isSpeakingTranslation,
+                        onTranslateClick = viewModel::onTranslateTranscript,
+                        onSpeakClick = viewModel::onSpeakTranslatedTranscript,
+                        onStopSpeakingClick = viewModel::onStopSpeakingTranslation,
                         accentColor = accentColor,
                         modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(24.dp)),
                     )
@@ -763,7 +807,13 @@ fun NowPlayingScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(if (channel == NowPlayingChannel.Lyrics) backgroundTop else Color.Black),
+                    .background(
+                        if (channel == NowPlayingChannel.Lyrics || channel == NowPlayingChannel.Transcript) {
+                            backgroundTop
+                        } else {
+                            Color.Black
+                        },
+                    ),
             ) {
                 when (channel) {
                     NowPlayingChannel.Visualizer -> VisualizerSurface(
@@ -776,6 +826,18 @@ fun NowPlayingScreen(
                         result = lyricsResult,
                         isLoading = isLoadingLyrics,
                         positionMs = playbackState.positionMs,
+                        accentColor = accentColor,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    NowPlayingChannel.Transcript -> TranscriptChannelContent(
+                        result = transcriptResult,
+                        isLoading = isLoadingTranscript,
+                        translated = translatedTranscript,
+                        isTranslating = isTranslatingTranscript,
+                        isSpeaking = isSpeakingTranslation,
+                        onTranslateClick = viewModel::onTranslateTranscript,
+                        onSpeakClick = viewModel::onSpeakTranslatedTranscript,
+                        onStopSpeakingClick = viewModel::onStopSpeakingTranslation,
                         accentColor = accentColor,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -912,8 +974,14 @@ private fun LyricsChannelContent(
 @Composable
 private fun SyncedLyricsKaraoke(lines: List<LyricsLine>, positionMs: Long, accentColor: Color) {
     val listState = rememberLazyListState()
-    val currentIndex by remember(lines) {
-        derivedStateOf { lines.indexOfLast { it.timestampMs <= positionMs }.coerceAtLeast(0) }
+    // Zgłoszenie: linia "zamrażała się" po wejściu w ekran (szczególnie widoczne przy streamie,
+    // gdzie user zdążył zauważyć zanim by przewinęło lokalnie). Przyczyna: `positionMs` to zwykły
+    // parametr (nie `State`), a `derivedStateOf` śledzi tylko odczyty PRAWDZIWEGO stanu — bez tego
+    // `remember(lines)` zamrażał lambdę z PIERWSZEJ kompozycji, więc kolejne tiki pozycji nigdy jej
+    // nie przeliczały. Zwykłe `remember(lines, positionMs)` przelicza się przy każdym ticku (co
+    // ~300ms, `indexOfLast` na góra kilkuset liniach — tanie) i faktycznie widzi zmiany pozycji.
+    val currentIndex = remember(lines, positionMs) {
+        lines.indexOfLast { it.timestampMs <= positionMs }.coerceAtLeast(0)
     }
 
     LaunchedEffect(currentIndex) {
@@ -935,6 +1003,92 @@ private fun SyncedLyricsKaraoke(lines: List<LyricsLine>, positionMs: Long, accen
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
             )
+        }
+    }
+}
+
+/**
+ * Treść kanału Transkrypcja — DESIGN.md Etap 54, zgłoszenie: "czy da się wbudować tłumaczenie z
+ * ang na polski". Statyczny blok tekstu (transkrypcja z `<podcast:transcript>` NIE ma per-linię
+ * timecode wartego renderowania jak karaoke w Napisach — to tekst do CZYTANIA, nie
+ * podśpiewywania) + przycisk tłumaczenia EN→PL (ML Kit, on-demand) + przycisk "przeczytaj na
+ * głos" (systemowy TTS) po przetłumaczeniu.
+ */
+@Composable
+private fun TranscriptChannelContent(
+    result: TranscriptResult?,
+    isLoading: Boolean,
+    translated: TranslationResult?,
+    isTranslating: Boolean,
+    isSpeaking: Boolean,
+    onTranslateClick: () -> Unit,
+    onSpeakClick: () -> Unit,
+    onStopSpeakingClick: () -> Unit,
+    accentColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        when {
+            isLoading -> CircularProgressIndicator(color = accentColor)
+            result == null || result is TranscriptResult.NotAvailable -> Text(
+                text = "Brak transkrypcji dla tego odcinka",
+                style = AuroraTextStyles.Body,
+                color = Color.White.copy(alpha = 0.6f),
+            )
+            result is TranscriptResult.Loaded -> Column(modifier = Modifier.fillMaxSize()) {
+                // `top = 64.dp`: w obu miejscach użycia (ramka i pełny ekran) w tym samym rogu
+                // (TopStart) siedzi `CloseVisualizerButton` (48dp target + padding) — bez tego
+                // odstępu przycisk tłumaczenia wizualnie nachodził na X.
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(top = 64.dp, bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (translated == null) {
+                        Button(onClick = onTranslateClick, enabled = !isTranslating) {
+                            if (isTranslating) {
+                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+                            } else {
+                                Icon(imageVector = Icons.Filled.Translate, contentDescription = null, modifier = Modifier.size(18.dp))
+                            }
+                            Text(
+                                text = if (isTranslating) "Tłumaczenie…" else "Przetłumacz na polski",
+                                modifier = Modifier.padding(start = 8.dp),
+                            )
+                        }
+                    } else if (translated is TranslationResult.Translated) {
+                        Button(onClick = if (isSpeaking) onStopSpeakingClick else onSpeakClick) {
+                            Icon(
+                                imageVector = if (isSpeaking) Icons.Filled.Stop else Icons.Filled.VolumeUp,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Text(text = if (isSpeaking) "Zatrzymaj" else "Przeczytaj na głos", modifier = Modifier.padding(start = 8.dp))
+                        }
+                    }
+                }
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 16.dp),
+                ) {
+                    item {
+                        val translatedText = (translated as? TranslationResult.Translated)?.text
+                        Text(
+                            text = translatedText ?: result.text,
+                            style = AuroraTextStyles.Body,
+                            color = Color.White,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        if (translated is TranslationResult.Failed) {
+                            Text(
+                                text = "Nie udało się przetłumaczyć — spróbuj ponownie.",
+                                style = AuroraTextStyles.Label,
+                                color = Color.White.copy(alpha = 0.6f),
+                                modifier = Modifier.padding(top = 12.dp),
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }

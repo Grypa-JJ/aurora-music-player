@@ -18,6 +18,11 @@ data class PodcastEpisode(
     val durationMs: Long,
     val publishedAtMs: Long,
     val description: String,
+    /** `<podcast:transcript>` (namespace Podcasting 2.0) — `null` gdy feed go nie publikuje
+     *  (większość dziś nie). [transcriptType] to MIME z atrybutu `type` (np. `text/plain`,
+     *  `text/vtt`, `application/srt`) — decyduje, jak [transcriptUrl] sparsować. */
+    val transcriptUrl: String? = null,
+    val transcriptType: String? = null,
 )
 
 /** Źródło wyniku wyszukiwania katalogu — dwa niezależne katalogi, patrz [com.aurora.player.domain.repository.PodcastCatalogRepository]. */

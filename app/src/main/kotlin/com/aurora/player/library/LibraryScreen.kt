@@ -249,133 +249,150 @@ fun LibraryScreen(
                 }
             }
 
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                singleLine = true,
-                placeholder = { Text("Szukaj w bibliotece") },
-                leadingIcon = { Icon(imageVector = Icons.Filled.Search, contentDescription = null) },
-                trailingIcon = {
-                    if (searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { searchQuery = "" }) {
-                            Icon(imageVector = Icons.Filled.Clear, contentDescription = "Wyczyść")
+            // Zgłoszenie: wyszukiwarka/skróty/przełącznik tabów były NA STAŁE nad listą — tyle co
+            // ekran albumu z okładką i "Odtwórz" (patrz AlbumDetailScreen), ten sam problem na
+            // mniejszych ekranach. Wydzielone do lambdy, wstrzykiwanej jako pierwszy element
+            // odpowiedniej listy/siatki niżej — przewija się razem z treścią, chowa do góry.
+            // Pozostaje TYLKO cienki pasek "Biblioteka" nad tym, tak jak strzałka "Wstecz" w
+            // ekranach szczegółów.
+            val libraryHeader: @Composable () -> Unit = {
+                Column {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        singleLine = true,
+                        placeholder = { Text("Szukaj w bibliotece") },
+                        leadingIcon = { Icon(imageVector = Icons.Filled.Search, contentDescription = null) },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(imageVector = Icons.Filled.Clear, contentDescription = "Wyczyść")
+                                }
+                            }
+                        },
+                        shape = RoundedCornerShape(999.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            unfocusedBorderColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.15f),
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = tokens.spacing.m),
+                    )
+
+                    // Etap 37: Genius/Radio przeniesione na Home (ekran startowy, kuratorski dashboard
+                    // ze skrótami do wszystkich 8 domen treści) — zostają tu tylko skróty do rzeczy
+                    // ściśle "Twoich" w obrębie samej Biblioteki (Ulubione/Playlisty/Subskrypcje), żeby
+                    // nie trzeba było wracać na Home po prostą, częstą czynność w obrębie tego taba.
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = tokens.spacing.m),
+                        horizontalArrangement = Arrangement.spacedBy(tokens.spacing.s),
+                        modifier = Modifier.padding(top = tokens.spacing.m),
+                    ) {
+                        item {
+                            DomainShortcutCard(
+                                icon = Icons.Filled.FavoriteBorder,
+                                title = "Ulubione",
+                                subtitle = "${favoriteTrackIds.size} utworów",
+                                onClick = onOpenFavorites,
+                            )
+                        }
+                        item {
+                            DomainShortcutCard(
+                                icon = Icons.Filled.QueueMusic,
+                                title = "Playlisty",
+                                subtitle = "${playlists.size} playlist",
+                                onClick = onOpenPlaylists,
+                            )
+                        }
+                        item {
+                            DomainShortcutCard(
+                                icon = Icons.Filled.Podcasts,
+                                title = "Subskrypcje",
+                                subtitle = "Podkasty i audiobooki",
+                                onClick = onOpenPodcasts,
+                            )
+                        }
+                        item {
+                            DomainShortcutCard(
+                                icon = Icons.Filled.Download,
+                                title = "Pobrane",
+                                subtitle = "${archiveLibraryTracks.size} utworów",
+                                onClick = onOpenDownloads,
+                            )
                         }
                     }
-                },
-                shape = RoundedCornerShape(999.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    unfocusedBorderColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.15f),
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = tokens.spacing.m),
-            )
 
-            // Etap 37: Genius/Radio przeniesione na Home (ekran startowy, kuratorski dashboard
-            // ze skrótami do wszystkich 8 domen treści) — zostają tu tylko skróty do rzeczy
-            // ściśle "Twoich" w obrębie samej Biblioteki (Ulubione/Playlisty/Subskrypcje), żeby
-            // nie trzeba było wracać na Home po prostą, częstą czynność w obrębie tego taba.
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = tokens.spacing.m),
-                horizontalArrangement = Arrangement.spacedBy(tokens.spacing.s),
-                modifier = Modifier.padding(top = tokens.spacing.m),
-            ) {
-                item {
-                    DomainShortcutCard(
-                        icon = Icons.Filled.FavoriteBorder,
-                        title = "Ulubione",
-                        subtitle = "${favoriteTrackIds.size} utworów",
-                        onClick = onOpenFavorites,
-                    )
-                }
-                item {
-                    DomainShortcutCard(
-                        icon = Icons.Filled.QueueMusic,
-                        title = "Playlisty",
-                        subtitle = "${playlists.size} playlist",
-                        onClick = onOpenPlaylists,
-                    )
-                }
-                item {
-                    DomainShortcutCard(
-                        icon = Icons.Filled.Podcasts,
-                        title = "Subskrypcje",
-                        subtitle = "Podkasty i audiobooki",
-                        onClick = onOpenPodcasts,
-                    )
-                }
-                item {
-                    DomainShortcutCard(
-                        icon = Icons.Filled.Download,
-                        title = "Pobrane",
-                        subtitle = "${archiveLibraryTracks.size} utworów",
-                        onClick = onOpenDownloads,
-                    )
-                }
-            }
-
-            // Etap 22/23, user: "wszystkie wymienione" (Albumy/Wykonawcy z pierwotnej wizji,
-            // sekcja 3.1). Prosty segmentowany pasek, nie Material3 TabRow — spójniejszy wizualnie
-            // z resztą appki (pigułki, karty), tak jak presety EQ w EqualizerSheet.
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.m),
-                horizontalArrangement = Arrangement.spacedBy(tokens.spacing.s),
-            ) {
-                LibraryTab.entries.forEach { tab ->
-                    val isSelected = tab == selectedTab
-                    Text(
-                        text = tab.label,
-                        style = AuroraTextStyles.Label,
-                        color = if (isSelected) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
-                        },
+                    // Etap 22/23, user: "wszystkie wymienione" (Albumy/Wykonawcy z pierwotnej wizji,
+                    // sekcja 3.1). Prosty segmentowany pasek, nie Material3 TabRow — spójniejszy wizualnie
+                    // z resztą appki (pigułki, karty), tak jak presety EQ w EqualizerSheet.
+                    Row(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(999.dp))
-                            .background(
-                                if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent,
+                            .fillMaxWidth()
+                            .padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.m),
+                        horizontalArrangement = Arrangement.spacedBy(tokens.spacing.s),
+                    ) {
+                        LibraryTab.entries.forEach { tab ->
+                            val isSelected = tab == selectedTab
+                            Text(
+                                text = tab.label,
+                                style = AuroraTextStyles.Label,
+                                color = if (isSelected) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f)
+                                },
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(
+                                        if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color.Transparent,
+                                    )
+                                    .clickable { selectedTab = tab }
+                                    .padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s),
                             )
-                            .clickable { selectedTab = tab }
-                            .padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s),
-                    )
+                        }
+                    }
                 }
             }
 
             when {
                 // Nie blokuj widoku permission-promptem, jeśli mamy już czym wypełnić listę
-                // (np. same utwory z chmury bez zgody na lokalny storage).
+                // (np. same utwory z chmury bez zgody na lokalny storage). Header zostaje widoczny —
+                // to jedyny sposób dotarcia do tabów/wyszukiwarki, zanim cokolwiek się załaduje.
                 !uiState.hasPermission && uiState.allTracks.isEmpty() -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(tokens.spacing.l),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                    ) {
-                        Text(
-                            text = "Aurora potrzebuje dostępu do muzyki na urządzeniu, żeby zbudować Twoją bibliotekę.",
-                            style = AuroraTextStyles.Body,
-                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                        )
-                        Button(
-                            onClick = { permissionLauncher.launch(audioPermission) },
-                            modifier = Modifier.padding(top = tokens.spacing.m),
+                    Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        libraryHeader()
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(tokens.spacing.l),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
                         ) {
-                            Text("Zezwól na dostęp")
+                            Text(
+                                text = "Aurora potrzebuje dostępu do muzyki na urządzeniu, żeby zbudować Twoją bibliotekę.",
+                                style = AuroraTextStyles.Body,
+                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                            )
+                            Button(
+                                onClick = { permissionLauncher.launch(audioPermission) },
+                                modifier = Modifier.padding(top = tokens.spacing.m),
+                            ) {
+                                Text("Zezwól na dostęp")
+                            }
                         }
                     }
                 }
 
                 uiState.allTracks.isEmpty() && !uiState.isLoading && !uiState.isLoadingCloud -> {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(
-                            text = "Nie znaleziono muzyki na urządzeniu.",
-                            style = AuroraTextStyles.Body,
-                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                        )
+                    Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        libraryHeader()
+                        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "Nie znaleziono muzyki na urządzeniu.",
+                                style = AuroraTextStyles.Body,
+                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                            )
+                        }
                     }
                 }
 
@@ -385,6 +402,7 @@ fun LibraryScreen(
                         searchQuery = searchQuery,
                         onOpenAlbum = onOpenAlbum,
                         modifier = Modifier.weight(1f),
+                        header = libraryHeader,
                     )
                 }
 
@@ -394,16 +412,20 @@ fun LibraryScreen(
                         searchQuery = searchQuery,
                         onOpenArtist = onOpenArtist,
                         modifier = Modifier.weight(1f),
+                        header = libraryHeader,
                     )
                 }
 
                 filteredTracks.isEmpty() -> {
-                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        Text(
-                            text = "Brak wyników dla „$searchQuery”",
-                            style = AuroraTextStyles.Body,
-                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                        )
+                    Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        libraryHeader()
+                        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "Brak wyników dla „$searchQuery”",
+                                style = AuroraTextStyles.Body,
+                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                            )
+                        }
                     }
                 }
 
@@ -420,6 +442,7 @@ fun LibraryScreen(
                             bottom = LocalBottomChromeInset.current + tokens.spacing.s,
                         ),
                     ) {
+                        item { libraryHeader() }
                         items(filteredTracks, key = { it.id }) { track ->
                             TrackListItem(
                                 title = track.title,

@@ -98,38 +98,43 @@ fun AlbumDetailScreen(
             )
         }
 
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = tokens.spacing.m)) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth(0.5f)
-                    .aspectRatio(1f)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.surface),
-            ) {
-                if (album.albumArtUri != null) {
-                    AsyncImage(model = album.albumArtUri, contentDescription = null, modifier = Modifier.fillMaxWidth().aspectRatio(1f))
-                }
-            }
-            Text(
-                text = album.name,
-                style = AuroraTextStyles.Headline,
-                color = MaterialTheme.colorScheme.onBackground,
-                modifier = Modifier.padding(top = tokens.spacing.m),
-            )
-            Text(
-                text = "${album.artist} • ${album.tracks.size} utworów",
-                style = AuroraTextStyles.Label,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-            )
-            Button(onClick = { viewModel.onPlayTracks(album.tracks) }, modifier = Modifier.padding(top = tokens.spacing.m)) {
-                Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                Text(text = "Odtwórz", modifier = Modifier.padding(start = tokens.spacing.xs))
-            }
-        }
-
+        // Zgłoszenie: okładka + "Odtwórz" siedziały w osobnym `Column` NAD `LazyColumn` — zawsze
+        // zajmowały tę samą przestrzeń, na mniejszych ekranach zostawiając mało miejsca na listę
+        // utworów. Jako pierwszy element `LazyColumn` przewijają się razem z listą (chowają się do
+        // góry), bez osobnego tła — blenduje się z tłem ekranu zamiast tworzyć stały pasek.
         LazyColumn(
             contentPadding = PaddingValues(horizontal = tokens.spacing.s, vertical = tokens.spacing.m),
         ) {
+            item {
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = tokens.spacing.xs)) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.5f)
+                            .aspectRatio(1f)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(MaterialTheme.colorScheme.surface),
+                    ) {
+                        if (album.albumArtUri != null) {
+                            AsyncImage(model = album.albumArtUri, contentDescription = null, modifier = Modifier.fillMaxWidth().aspectRatio(1f))
+                        }
+                    }
+                    Text(
+                        text = album.name,
+                        style = AuroraTextStyles.Headline,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.padding(top = tokens.spacing.m),
+                    )
+                    Text(
+                        text = "${album.artist} • ${album.tracks.size} utworów",
+                        style = AuroraTextStyles.Label,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                    )
+                    Button(onClick = { viewModel.onPlayTracks(album.tracks) }, modifier = Modifier.padding(top = tokens.spacing.m, bottom = tokens.spacing.s)) {
+                        Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Text(text = "Odtwórz", modifier = Modifier.padding(start = tokens.spacing.xs))
+                    }
+                }
+            }
             itemsIndexed(album.tracks, key = { _, track -> track.id }) { index, track ->
                 TrackListItem(
                     title = track.title,

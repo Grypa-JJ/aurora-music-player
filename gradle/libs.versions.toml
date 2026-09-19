@@ -27,6 +27,7 @@ composeMultiplatform = "1.7.3"
 javafxPlugin = "0.1.0"
 supabase = "3.0.1"
 ktor = "3.0.0"
+mlkitTranslate = "17.0.3"
 
 [libraries]
 junit = { group = "junit", name = "junit", version.ref = "junit" }
@@ -68,6 +69,7 @@ reorderable = { group = "sh.calvin.reorderable", name = "reorderable", version.r
 supabase-auth = { group = "io.github.jan-tennert.supabase", name = "auth-kt", version.ref = "supabase" }
 supabase-postgrest = { group = "io.github.jan-tennert.supabase", name = "postgrest-kt", version.ref = "supabase" }
 ktor-client-cio = { group = "io.ktor", name = "ktor-client-cio", version.ref = "ktor" }
+mlkit-translate = { group = "com.google.mlkit", name = "translate", version.ref = "mlkitTranslate" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

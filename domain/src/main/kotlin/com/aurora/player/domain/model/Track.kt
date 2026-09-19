@@ -23,4 +23,9 @@ data class Track(
      * DESIGN.md Etap 42.
      */
     val albumId: Long? = null,
+    /** `<podcast:transcript>` z feedu RSS, TYLKO dla [TrackSource.PODCAST] — patrz
+     *  [com.aurora.player.domain.model.PodcastEpisode.transcriptUrl]. `null` = feed go nie
+     *  publikuje (większość dziś nie) — ekran transkrypcji wtedy się nie pokazuje. */
+    val transcriptUrl: String? = null,
+    val transcriptType: String? = null,
 )

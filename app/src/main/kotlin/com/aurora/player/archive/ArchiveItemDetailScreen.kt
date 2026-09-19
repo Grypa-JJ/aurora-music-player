@@ -1,5 +1,6 @@
 package com.aurora.player.archive
 
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddToQueue
+import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Downloading
@@ -67,7 +69,10 @@ fun ArchiveItemDetailScreen(
     val tokens = LocalAuroraTokens.current
 
     val item = remember(allItems, identifier) { allItems.find { it.identifier == identifier } }
-    val libraryTrackIds = remember(libraryTracks) { libraryTracks.map { it.id }.toSet() }
+    // `Track.uri` zaczynające się od "file:" = pobrane na stałe; inaczej ("https://...") = w
+    // bibliotece jako stream (patrz `ArchiveLibraryTrackMapper.toTrack` — nie potrzeba osobnego pola).
+    val libraryTrackById = remember(libraryTracks) { libraryTracks.associateBy { it.id } }
+    val libraryTrackIds = remember(libraryTrackById) { libraryTrackById.keys }
 
     var trackForMenu by remember { mutableStateOf<ArchiveTrack?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
@@ -99,7 +104,7 @@ fun ArchiveItemDetailScreen(
                     color = MaterialTheme.colorScheme.onBackground,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f).padding(start = tokens.spacing.xs),
+                    modifier = Modifier.weight(1f).padding(start = tokens.spacing.xs).basicMarquee(),
                 )
                 // Zgłoszenie: pobieranie utworów jeden po jednym z menu "..." to dużo klikania przy
                 // albumie/koncercie z kilkudziesięcioma ścieżkami — jeden przycisk pobiera od razu
@@ -107,8 +112,39 @@ fun ArchiveItemDetailScreen(
                 // `addTrackToLibrary`, więc bezpiecznie wywołać go dla całej listy naraz).
                 if (item != null && tracks.size > 1) {
                     val trackIds = remember(tracks, item) { tracks.map { it.toTrack(item).id } }
-                    val allDownloaded = trackIds.all { it in libraryTrackIds }
+                    // Zgłoszenie: "w streamie" i "pobrane" to różne stany — sam fakt bycia w
+                    // bibliotece (`libraryTrackIds`) NIE znaczy, że plik jest pobrany na dysk.
+                    // Przycisk pobierania ma pokazywać "gotowe" tylko gdy WSZYSTKO ma
+                    // `localFileUri` (nie tylko wpis w Room), inaczej fałszywie sugeruje pełne
+                    // pobranie dla albumu dodanego tylko jako stream.
+                    val allInLibrary = trackIds.all { it in libraryTrackIds }
+                    val allDownloaded = trackIds.all { libraryTrackById[it]?.uri?.startsWith("file:") == true }
                     val anyDownloading = trackIds.any { it in downloadingTrackIds }
+                    // Zgłoszenie: obok zbiorczego pobrania cały album ma też zbiorczą, lżejszą
+                    // opcję — dodanie wszystkich ścieżek jako stream naraz (bez zajmowania miejsca
+                    // na dysku), analogicznie do `onAddArchiveTrackToLibraryAsStream` per ścieżka.
+                    Icon(
+                        imageVector = Icons.Filled.CloudQueue,
+                        contentDescription = if (allInLibrary) "Cały album w bibliotece" else "Dodaj cały album jako stream",
+                        tint = if (allInLibrary) {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+                        } else {
+                            MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f)
+                        },
+                        modifier = Modifier
+                            .padding(end = tokens.spacing.s)
+                            .size(28.dp)
+                            .clickable(enabled = !allInLibrary) {
+                                tracks.forEachIndexed { index, track ->
+                                    if (trackIds[index] !in libraryTrackIds) {
+                                        viewModel.onAddArchiveTrackToLibraryAsStream(track, item)
+                                    }
+                                }
+                            },
+                    )
+                    // Ta sama akcja dociąga też albumy dodane wcześniej TYLKO jako stream — patrz
+                    // fix w `ArchiveRepositoryImpl.addTrackToLibrary`, dedup pomija już wyłącznie
+                    // realnie pobrane ścieżki, więc upgrade stream→download działa zbiorczo.
                     Icon(
                         imageVector = when {
                             anyDownloading -> Icons.Filled.Downloading
@@ -125,7 +161,7 @@ fun ArchiveItemDetailScreen(
                             .size(28.dp)
                             .clickable(enabled = !allDownloaded && !anyDownloading) {
                                 tracks.forEachIndexed { index, track ->
-                                    if (trackIds[index] !in libraryTrackIds) {
+                                    if (libraryTrackById[trackIds[index]]?.uri?.startsWith("file:") != true) {
                                         viewModel.onAddArchiveTrackToLibrary(track, item)
                                     }
                                 }
@@ -158,6 +194,7 @@ fun ArchiveItemDetailScreen(
                     LazyColumn(contentPadding = PaddingValues(horizontal = tokens.spacing.s, vertical = tokens.spacing.s)) {
                         items(tracks, key = { it.fileName }) { archiveTrack ->
                             val trackId = remember(archiveTrack, item) { archiveTrack.toTrack(item).id }
+                            val libraryUri = libraryTrackById[trackId]?.uri
                             TrackListItem(
                                 title = archiveTrack.title,
                                 artist = item.creator,
@@ -166,7 +203,8 @@ fun ArchiveItemDetailScreen(
                                 isCurrentlyPlaying = playbackState.currentTrack?.id == trackId,
                                 onClick = { viewModel.onPlayArchiveTrack(archiveTrack, item, tracks) },
                                 onMoreClick = { trackForMenu = archiveTrack },
-                                isSavedOffline = trackId in libraryTrackIds,
+                                isSavedOffline = libraryUri?.startsWith("file:") == true,
+                                isStreamed = libraryUri != null && !libraryUri.startsWith("file:"),
                             )
                         }
                     }
@@ -190,45 +228,77 @@ fun ArchiveItemDetailScreen(
     if (item != null) {
         trackForMenu?.let { menuTrack ->
             val menuTrackId = remember(menuTrack, item) { menuTrack.toTrack(item).id }
-            val isInLibrary = menuTrackId in libraryTrackIds
+            val libraryUri = libraryTrackById[menuTrackId]?.uri
+            val isDownloaded = libraryUri?.startsWith("file:") == true
+            val isStreamed = libraryUri != null && !isDownloaded
             val isDownloading = menuTrackId in downloadingTrackIds
+
+            // Zgłoszenie: "przycisk streaming, który będzie dodawać tylko do biblioteki utwory w
+            // postaci streamingu" — obok pełnego pobrania, druga, lżejsza opcja dodania do
+            // biblioteki (bez zajmowania miejsca na dysku, ale bez odtwarzania offline).
+            val libraryActions = when {
+                isDownloading -> listOf(
+                    TrackAction(icon = Icons.Filled.Downloading, label = "Pobieranie…", onClick = {}),
+                )
+                isDownloaded -> listOf(
+                    TrackAction(
+                        icon = Icons.Filled.DeleteOutline,
+                        label = "Usuń z biblioteki (offline)",
+                        onClick = {
+                            viewModel.onRemoveArchiveTrackFromLibrary(menuTrackId)
+                            trackForMenu = null
+                        },
+                    ),
+                )
+                isStreamed -> listOf(
+                    TrackAction(
+                        icon = Icons.Filled.Download,
+                        label = "Pobierz na stałe (offline)",
+                        onClick = {
+                            viewModel.onAddArchiveTrackToLibrary(menuTrack, item)
+                            trackForMenu = null
+                        },
+                    ),
+                    TrackAction(
+                        icon = Icons.Filled.DeleteOutline,
+                        label = "Usuń ze strumienia",
+                        onClick = {
+                            viewModel.onRemoveArchiveTrackFromLibrary(menuTrackId)
+                            trackForMenu = null
+                        },
+                    ),
+                )
+                else -> listOf(
+                    TrackAction(
+                        icon = Icons.Filled.Download,
+                        label = "Dodaj do biblioteki (pobierz na stałe)",
+                        onClick = {
+                            viewModel.onAddArchiveTrackToLibrary(menuTrack, item)
+                            trackForMenu = null
+                        },
+                    ),
+                    TrackAction(
+                        icon = Icons.Filled.CloudQueue,
+                        label = "Dodaj do biblioteki jako stream",
+                        onClick = {
+                            viewModel.onAddArchiveTrackToLibraryAsStream(menuTrack, item)
+                            trackForMenu = null
+                        },
+                    ),
+                )
+            }
 
             TrackActionsSheet(
                 title = menuTrack.title,
                 subtitle = item.creator,
                 albumArtUrl = item.coverUrl,
-                actions = listOf(
-                    when {
-                        isDownloading -> TrackAction(
-                            icon = Icons.Filled.Downloading,
-                            label = "Pobieranie…",
-                            onClick = {},
-                        )
-                        isInLibrary -> TrackAction(
-                            icon = Icons.Filled.DeleteOutline,
-                            label = "Usuń z biblioteki (offline)",
-                            onClick = {
-                                viewModel.onRemoveArchiveTrackFromLibrary(menuTrackId)
-                                trackForMenu = null
-                            },
-                        )
-                        else -> TrackAction(
-                            icon = Icons.Filled.Download,
-                            label = "Dodaj do biblioteki (pobierz na stałe)",
-                            onClick = {
-                                viewModel.onAddArchiveTrackToLibrary(menuTrack, item)
-                                trackForMenu = null
-                            },
-                        )
+                actions = libraryActions + TrackAction(
+                    icon = Icons.Filled.AddToQueue,
+                    label = "Dodaj do kolejki",
+                    onClick = {
+                        viewModel.onAddToQueue(menuTrack.toTrack(item))
+                        trackForMenu = null
                     },
-                    TrackAction(
-                        icon = Icons.Filled.AddToQueue,
-                        label = "Dodaj do kolejki",
-                        onClick = {
-                            viewModel.onAddToQueue(menuTrack.toTrack(item))
-                            trackForMenu = null
-                        },
-                    ),
                 ),
                 onDismiss = { trackForMenu = null },
             )

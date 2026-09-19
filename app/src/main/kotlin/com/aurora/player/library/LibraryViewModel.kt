@@ -13,6 +13,7 @@ import com.aurora.player.color.AlbumArtPalette
 import com.aurora.player.domain.model.ArchiveCategory
 import com.aurora.player.domain.model.ArchiveDownload
 import com.aurora.player.domain.model.ArchiveItem
+import com.aurora.player.domain.model.ArchiveLibraryGroup
 import com.aurora.player.domain.model.ArchiveTrack
 import com.aurora.player.domain.model.Audiobook
 import com.aurora.player.domain.model.AudiobookChapter
@@ -40,19 +41,26 @@ import com.aurora.player.domain.model.PodcastEpisode
 import com.aurora.player.domain.model.PodcastSearchResult
 import com.aurora.player.domain.model.RadioStation
 import com.aurora.player.domain.model.TrackSource
+import com.aurora.player.domain.model.TranscriptResult
+import com.aurora.player.domain.model.TranslationResult
 import com.aurora.player.domain.repository.PlayerRepository
 import com.aurora.player.domain.repository.PlaylistRepository
 import com.aurora.player.domain.repository.PodcastCatalogRepository
 import com.aurora.player.domain.repository.PodcastRepository
 import com.aurora.player.domain.repository.RadioRepository
+import com.aurora.player.domain.repository.TranscriptRepository
+import com.aurora.player.domain.repository.TranslationRepository
 import com.aurora.player.domain.usecase.GetTracksUseCase
 import com.aurora.player.independent.toTrack
 import com.aurora.player.playback.SleepTimerController
 import com.aurora.player.podcast.toTrack
 import com.aurora.player.radio.toTrack
+import com.aurora.player.translation.TtsSpeaker
 import com.aurora.player.visualizer.AudioVisualizerAnalyzer
 import com.aurora.player.visualizer.VisualizerFrame
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -117,6 +125,9 @@ class LibraryViewModel @Inject constructor(
     private val archiveRepository: ArchiveRepository,
     private val independentMusicRepository: IndependentMusicRepository,
     private val artistInfoRepository: ArtistInfoRepository,
+    private val transcriptRepository: TranscriptRepository,
+    private val translationRepository: TranslationRepository,
+    private val ttsSpeaker: TtsSpeaker,
 ) : ViewModel() {
 
     val isCloudSignedIn: StateFlow<Boolean> = googleDriveLibraryRepository.isSignedIn
@@ -156,6 +167,22 @@ class LibraryViewModel @Inject constructor(
     private val _isLoadingLyrics = MutableStateFlow(false)
     val isLoadingLyrics: StateFlow<Boolean> = _isLoadingLyrics.asStateFlow()
 
+    // Transkrypcja podkastu + tłumaczenie EN→PL — DESIGN.md Etap 54, zgłoszenie: "czy da się
+    // wbudować tłumaczenie". Tłumaczenie NIE ładuje się automatycznie z transkrypcją (model ML
+    // Kit trzeba pobrać, tłumaczenie kilku tysięcy słów zajmuje realny czas) — user odpala je
+    // świadomym tapnięciem, patrz `onTranslateTranscript`.
+    private val _transcriptResult = MutableStateFlow<TranscriptResult?>(null)
+    val transcriptResult: StateFlow<TranscriptResult?> = _transcriptResult.asStateFlow()
+
+    private val _isLoadingTranscript = MutableStateFlow(false)
+    val isLoadingTranscript: StateFlow<Boolean> = _isLoadingTranscript.asStateFlow()
+
+    private val _translatedTranscript = MutableStateFlow<TranslationResult?>(null)
+    val translatedTranscript: StateFlow<TranslationResult?> = _translatedTranscript.asStateFlow()
+
+    private val _isTranslatingTranscript = MutableStateFlow(false)
+    val isTranslatingTranscript: StateFlow<Boolean> = _isTranslatingTranscript.asStateFlow()
+
     init {
         viewModelScope.launch {
             playbackState
@@ -181,6 +208,23 @@ class LibraryViewModel @Inject constructor(
                         _isLoadingLyrics.value = true
                         _lyricsResult.value = lyricsRepository.getLyrics(track)
                         _isLoadingLyrics.value = false
+                    }
+                }
+        }
+        // Transkrypcja — ten sam wzorzec co Napisy wyżej, ale TYLKO dla podkastów z
+        // `transcriptUrl` (większość feedów go nie publikuje). Tłumaczenie zostaje wyczyszczone
+        // przy każdej zmianie utworu — jest per-odcinek, nie ma sensu pokazywać go dla nowego.
+        viewModelScope.launch {
+            playbackState
+                .map { it.currentTrack }
+                .distinctUntilChanged { old, new -> old?.id == new?.id }
+                .collect { track ->
+                    _transcriptResult.value = null
+                    _translatedTranscript.value = null
+                    if (track != null && track.source == TrackSource.PODCAST && track.transcriptUrl != null) {
+                        _isLoadingTranscript.value = true
+                        _transcriptResult.value = transcriptRepository.getTranscript(track)
+                        _isLoadingTranscript.value = false
                     }
                 }
         }
@@ -520,6 +564,36 @@ class LibraryViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Tłumaczenie transkrypcji EN→PL — DESIGN.md Etap 54. Na żądanie (przycisk w Now Playing),
+     * nie automatycznie: pierwsze użycie ściąga model ML Kit (kilkadziesiąt MB, jednorazowo), a
+     * samo tłumaczenie kilku tysięcy słów zajmuje realny czas — user ma to świadomie odpalić, nie
+     * dostać niespodziewane zużycie danych/baterii przy każdym odcinku.
+     */
+    fun onTranslateTranscript(sourceLanguageCode: String = "en", targetLanguageCode: String = "pl") {
+        val text = (_transcriptResult.value as? TranscriptResult.Loaded)?.text ?: return
+        viewModelScope.launch {
+            _isTranslatingTranscript.value = true
+            _translatedTranscript.value = translationRepository.translate(text, sourceLanguageCode, targetLanguageCode)
+            _isTranslatingTranscript.value = false
+        }
+    }
+
+    val isSpeakingTranslation: StateFlow<Boolean> = ttsSpeaker.isSpeaking
+
+    /**
+     * "Lektor" czyta przetłumaczony tekst na głos — DESIGN.md Etap 54. Pauzuje odtwarzanie
+     * odcinka na czas czytania (świadomie, patrz KDoc [TtsSpeaker]) zamiast nakładać oryginalne
+     * audio i syntezator naraz — user wznawia podkast ręcznie, kiedy skończy słuchać tłumaczenia.
+     */
+    fun onSpeakTranslatedTranscript(languageCode: String = "pl") {
+        val text = (_translatedTranscript.value as? TranslationResult.Translated)?.text ?: return
+        playerRepository.pause()
+        ttsSpeaker.speak(text, languageCode)
+    }
+
+    fun onStopSpeakingTranslation() = ttsSpeaker.stop()
+
     private val _podcastEpisodes = MutableStateFlow<List<PodcastEpisode>>(emptyList())
     val podcastEpisodes: StateFlow<List<PodcastEpisode>> = _podcastEpisodes.asStateFlow()
 
@@ -554,6 +628,15 @@ class LibraryViewModel @Inject constructor(
     private val _isSearchingPodcasts = MutableStateFlow(false)
     val isSearchingPodcasts: StateFlow<Boolean> = _isSearchingPodcasts.asStateFlow()
 
+    // Zgłoszenie: "każdy podcast posiadający napisy powinien być promowany, w wyszukiwaniu
+    // powinny się wyświetlać te ikonki". Katalogi wyszukiwania (iTunes/Podcast Index/top kraju)
+    // NIE zwracają informacji o transkrypcji — trzeba sprawdzić RSS każdego wyniku osobno
+    // (`feedHasTranscript`, cache'owane). Robimy to W TLE, PO pokazaniu wyników (żeby wyszukiwanie
+    // zostało błyskawiczne), z ograniczoną równoległością — mapa aktualizuje się stopniowo, a
+    // lista wyników przesuwa potwierdzone "z transkrypcją" na górę w miarę jak przychodzą wyniki.
+    private val _podcastTranscriptAvailability = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val podcastTranscriptAvailability: StateFlow<Map<String, Boolean>> = _podcastTranscriptAvailability.asStateFlow()
+
     val isPodcastIndexConfigured: StateFlow<Boolean> = podcastCatalogRepository.isPodcastIndexConfigured
 
     fun setPodcastIndexCredentials(apiKey: String, apiSecret: String) =
@@ -570,6 +653,7 @@ class LibraryViewModel @Inject constructor(
             val seenFeedUrls = mutableSetOf<String>()
             _podcastSearchResults.value = (iTunesResults + podcastIndexResults).filter { seenFeedUrls.add(it.feedUrl) }
             _isSearchingPodcasts.value = false
+            checkTranscriptAvailability()
         }
     }
 
@@ -584,6 +668,28 @@ class LibraryViewModel @Inject constructor(
             _isSearchingPodcasts.value = true
             _podcastSearchResults.value = podcastCatalogRepository.topPodcastsByCountry(countryCode)
             _isSearchingPodcasts.value = false
+            checkTranscriptAvailability()
+        }
+    }
+
+    /**
+     * Patrz KDoc [podcastTranscriptAvailability]. Paczki po 4, żeby nie odpalić np. 25 zapytań RSS
+     * naraz. Zgłoszenie: świadomie NIE przesortowuje [_podcastSearchResults] — ta sama lista
+     * zasila zarówno wyszukiwanie (gdzie promowanie ma sens), jak i siatkę "Proponowane" w
+     * [com.aurora.player.podcast.PodcastsScreen] (gdzie NIE — transkrypcja jest rzadka, więc
+     * przesortowanie tam robiło z kuratorskich propozycji losową, zdominowaną przez 2-3 podcasty
+     * listę). Promowanie w samym wyszukiwaniu liczy `AddPodcastSheet` lokalnie z tej samej mapy.
+     */
+    private fun checkTranscriptAvailability() {
+        val feedUrls = _podcastSearchResults.value.map { it.feedUrl }
+        viewModelScope.launch {
+            feedUrls.chunked(4).forEach { batch ->
+                batch.map { feedUrl ->
+                    async { feedUrl to podcastRepository.feedHasTranscript(feedUrl) }
+                }.awaitAll().forEach { (feedUrl, hasTranscript) ->
+                    _podcastTranscriptAvailability.update { it + (feedUrl to hasTranscript) }
+                }
+            }
         }
     }
 
@@ -757,10 +863,14 @@ class LibraryViewModel @Inject constructor(
      * [loadPersonalizedArchive] (karuzela "Dla Ciebie" na Home) i [browseArchiveCategory]
      * (przeglądanie konkretnej kategorii w Archiwum, DESIGN.md Etap 46).
      *
-     * Tylko [TrackSource.LOCAL]: utwory z Google Drive/NAS-WebDAV mają w `Track.artist`/`Track.genre`
-     * placeholdery (nazwa usługi/konta, nie realne metadane odczytane z pliku) — wliczanie ich
-     * zaśmiecałoby gust, a w skrajnym przypadku wysłałoby e-mail konta Google jako `creator:` do
-     * publicznego wyszukiwania archive.org.
+     * [TrackSource.LOCAL] + [TrackSource.ARCHIVE]: utwory z Google Drive/NAS-WebDAV mają w
+     * `Track.artist`/`Track.genre` placeholdery (nazwa usługi/konta, nie realne metadane odczytane
+     * z pliku) — wliczanie ich zaśmiecałoby gust, a w skrajnym przypadku wysłałoby e-mail konta
+     * Google jako `creator:` do publicznego wyszukiwania archive.org. Archiwum jednak ma realnego
+     * wykonawcę (`item.creator`) niezależnie od tego, czy pozycja jest pobrana czy tylko
+     * streamowana (patrz `ArchiveLibraryTrackMapper` — `uri` różni się, `artist` nie) — zgłoszenie:
+     * personalizacja pomijała biblioteki złożone głównie ze streamów z Archiwum, bo liczył się
+     * tylko `TrackSource.LOCAL`.
      *
      * Zgłoszenie: Archiwum otwarte od razu po starcie appki (bez wcześniejszego wejścia w
      * Bibliotekę) dostawało zawsze "zahardcodowane" propozycje niezwiązane z muzyką na urządzeniu —
@@ -773,7 +883,9 @@ class LibraryViewModel @Inject constructor(
         if (!_uiState.value.localLibraryLoaded) {
             withTimeoutOrNull(3_000) { uiState.first { it.localLibraryLoaded } }
         }
-        val localTracks = _uiState.value.allTracks.filter { it.source == TrackSource.LOCAL }
+        val localTracks = _uiState.value.allTracks.filter {
+            it.source == TrackSource.LOCAL || it.source == TrackSource.ARCHIVE
+        }
         val favoriteIds = favoritesRepository.favoriteTrackIds.value
         val weighted = localTracks.flatMap { track ->
             List(if (track.id in favoriteIds) FAVORITE_TASTE_WEIGHT else 1) { track }
@@ -900,8 +1012,16 @@ class LibraryViewModel @Inject constructor(
         playerRepository.playQueue(queue.map { it.toTrack(item) }, startIndex)
     }
 
-    /** Ścieżki z Archiwum pobrane na stałe do biblioteki — do sprawdzenia stanu "już dodane" w UI. */
+    /** Ścieżki z Archiwum w bibliotece (pobrane na stałe LUB dodane jako stream) — do sprawdzenia stanu "już dodane" w UI. */
     val archiveLibraryTracks: StateFlow<List<Track>> = archiveRepository.library
+
+    /**
+     * Jak [archiveLibraryTracks], ale pogrupowane w "albumy/audiobooki/podcasty" wg kategorii —
+     * user: "pobieranie ma dodawać audiobooki/podcasty z Archiwum obok tych z LibriVox/realnych
+     * subskrypcji". `[ArchiveCategory.AUDIOBOOKS]`/`[PODCASTS]` do sekcji "Pobrane z Archiwum" w
+     * AudiobooksScreen/PodcastsScreen.
+     */
+    val archiveLibraryByCategory: StateFlow<Map<ArchiveCategory, List<ArchiveLibraryGroup>>> = archiveRepository.libraryByCategory
 
     /** `Track.id` ścieżek aktualnie pobieranych z archive.org — do spinnera przy wierszu. */
     val archiveDownloadingTrackIds: StateFlow<Set<Long>> = archiveRepository.downloadingTrackIds
@@ -918,6 +1038,19 @@ class LibraryViewModel @Inject constructor(
      */
     fun onAddArchiveTrackToLibrary(track: ArchiveTrack, item: ArchiveItem) {
         viewModelScope.launch { archiveRepository.addTrackToLibrary(track, item) }
+    }
+
+    /**
+     * Jak [onAddArchiveTrackToLibrary], ale bez pobierania pliku — wpis gra bezpośrednio z
+     * archive.org. User: "przycisk streaming, dodaje tylko do biblioteki w postaci streamingu, żeby
+     * cross między urządzeniami mógł jakoś działać" — UWAGA: to na razie TYLKO lokalny wpis Room na
+     * TYM urządzeniu. Żeby pojawił się też na innym zalogowanym urządzeniu, potrzebna jest osobna
+     * warstwa synchronizacji przez konto (Supabase Postgrest jest zainstalowany, ale nieużywany do
+     * żadnych danych poza samym logowaniem) — to nie jest tu jeszcze zrobione, patrz
+     * [ArchiveRepository.addTrackToLibraryAsStream].
+     */
+    fun onAddArchiveTrackToLibraryAsStream(track: ArchiveTrack, item: ArchiveItem) {
+        viewModelScope.launch { archiveRepository.addTrackToLibraryAsStream(track, item) }
     }
 
     fun onRemoveArchiveTrackFromLibrary(trackId: Long) {

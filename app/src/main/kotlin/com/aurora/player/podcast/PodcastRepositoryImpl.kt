@@ -62,6 +62,20 @@ class PodcastRepositoryImpl @Inject constructor(
         PodcastRssParser.parseEpisodes(feedUrl, xml)
     }
 
+    // Osobny, lekki cache od `fetchEpisodes` (ta funkcja świadomie NIE cache'uje odcinków, patrz
+    // jej KDoc) — "ma transkrypcję" per feed prawie nigdy się nie zmienia, więc odpytywanie
+    // katalogu wyszukiwania (dziesiątki wyników) nie ma bić w sieć drugi raz dla tego samego
+    // feedu przy kolejnym wyszukiwaniu tej samej frazy.
+    private val transcriptAvailabilityCache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    override suspend fun feedHasTranscript(feedUrl: String): Boolean = withContext(Dispatchers.IO) {
+        transcriptAvailabilityCache[feedUrl]?.let { return@withContext it }
+        val xml = fetchXml(feedUrl) ?: return@withContext false
+        val hasTranscript = PodcastRssParser.parseEpisodes(feedUrl, xml).any { it.transcriptUrl != null }
+        transcriptAvailabilityCache[feedUrl] = hasTranscript
+        hasTranscript
+    }
+
     override suspend fun getPlaybackPosition(trackId: Long): Long =
         podcastDao.getPlaybackPosition(trackId) ?: 0L
 

@@ -1,5 +1,6 @@
 package com.aurora.player.genius
 
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -97,39 +98,43 @@ fun GeniusMixPreviewScreen(
                     color = MaterialTheme.colorScheme.onBackground,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f).padding(start = tokens.spacing.xs),
+                    modifier = Modifier.weight(1f).padding(start = tokens.spacing.xs).basicMarquee(),
                 )
             }
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s),
-                horizontalArrangement = Arrangement.spacedBy(tokens.spacing.s),
-            ) {
-                Button(
-                    onClick = { viewModel.onPlayTracks(mix.tracks) },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Text(text = "Odtwórz", modifier = Modifier.padding(start = tokens.spacing.xs))
-                }
-                OutlinedButton(
-                    onClick = {
-                        viewModel.onSaveMixAsPlaylist(mix) {
-                            scope.launch { snackbarHostState.showSnackbar("Zapisano jako playlistę „${mix.name}”") }
-                        }
-                    },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(imageVector = Icons.Filled.LibraryAdd, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Text(text = "Zapisz jako playlistę", maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = tokens.spacing.xs))
-                }
-            }
-
+            // Zgłoszenie: przyciski Odtwórz/Zapisz jako playlistę były NA STAŁE nad listą — ten sam
+            // problem co album/artysta/playlista, ten sam fix: pierwszy element `LazyColumn`,
+            // przewija się razem z listą zamiast zajmować stałą przestrzeń.
             LazyColumn(
                 contentPadding = PaddingValues(horizontal = tokens.spacing.s, vertical = tokens.spacing.s),
             ) {
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = tokens.spacing.xs, vertical = tokens.spacing.s),
+                        horizontalArrangement = Arrangement.spacedBy(tokens.spacing.s),
+                    ) {
+                        Button(
+                            onClick = { viewModel.onPlayTracks(mix.tracks) },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Text(text = "Odtwórz", modifier = Modifier.padding(start = tokens.spacing.xs))
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.onSaveMixAsPlaylist(mix) {
+                                    scope.launch { snackbarHostState.showSnackbar("Zapisano jako playlistę „${mix.name}”") }
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Icon(imageVector = Icons.Filled.LibraryAdd, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Text(text = "Zapisz jako playlistę", maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = tokens.spacing.xs))
+                        }
+                    }
+                }
                 itemsIndexed(mix.tracks, key = { _, track -> track.id }) { index, track ->
                     TrackListItem(
                         title = track.title,

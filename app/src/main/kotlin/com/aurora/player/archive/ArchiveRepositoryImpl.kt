@@ -9,6 +9,7 @@ import com.aurora.player.di.ApplicationScope
 import com.aurora.player.domain.model.ArchiveCategory
 import com.aurora.player.domain.model.ArchiveDownload
 import com.aurora.player.domain.model.ArchiveItem
+import com.aurora.player.domain.model.ArchiveLibraryGroup
 import com.aurora.player.domain.model.ArchiveTrack
 import com.aurora.player.domain.model.Track
 import com.aurora.player.domain.repository.ArchiveRepository
@@ -59,6 +60,26 @@ class ArchiveRepositoryImpl @Inject constructor(
         .map { entities -> entities.map { it.toTrack() } }
         .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
+    override val libraryByCategory: StateFlow<Map<ArchiveCategory, List<ArchiveLibraryGroup>>> = archiveLibraryDao.observeAll()
+        .map { entities ->
+            entities
+                .mapNotNull { entity -> entity.category?.let { runCatching { ArchiveCategory.valueOf(it) }.getOrNull()?.let { cat -> cat to entity } } }
+                .groupBy({ it.first }, { it.second })
+                .mapValues { (_, categoryEntities) ->
+                    categoryEntities.groupBy { it.identifier }.map { (identifier, group) ->
+                        val first = group.first()
+                        ArchiveLibraryGroup(
+                            identifier = identifier,
+                            title = first.album,
+                            author = first.artist,
+                            coverUrl = first.albumArtUrl,
+                            tracks = group.sortedBy { it.addedAtMs }.map { it.toTrack() },
+                        )
+                    }
+                }
+        }
+        .stateIn(scope, SharingStarted.Eagerly, emptyMap())
+
     private val _downloadingTrackIds = MutableStateFlow<Set<Long>>(emptySet())
     override val downloadingTrackIds: StateFlow<Set<Long>> = _downloadingTrackIds
 
@@ -75,7 +96,12 @@ class ArchiveRepositoryImpl @Inject constructor(
     override suspend fun addTrackToLibrary(track: ArchiveTrack, item: ArchiveItem): Boolean =
         withContext(Dispatchers.IO) {
             val trackId = archiveTrackId(track.identifier, track.fileName)
-            if (trackId in _downloadingTrackIds.value || archiveLibraryDao.getByTrackId(trackId) != null) {
+            // Zgłoszenie: wpis może już istnieć jako STREAM (`localFileUri == null`) — to NIE jest
+            // "już pobrane", tylko kandydat do upgrade'u. Dedup ma pomijać wyłącznie realnie
+            // pobrane ścieżki; `insert` niżej jest REPLACE, więc bezpiecznie nadpisuje ten sam
+            // `trackId` z uzupełnionym `localFileUri` zamiast tworzyć duplikat.
+            val existing = archiveLibraryDao.getByTrackId(trackId)
+            if (trackId in _downloadingTrackIds.value || existing?.localFileUri != null) {
                 return@withContext true
             }
             _downloadingTrackIds.update { it + trackId }
@@ -93,19 +119,7 @@ class ArchiveRepositoryImpl @Inject constructor(
                 val destination = File(dir, track.fileName.substringAfterLast('/').ifBlank { "$trackId.audio" })
                 downloadToFile(track.audioUrl, destination)
                 archiveLibraryDao.insert(
-                    ArchiveLibraryTrackEntity(
-                        trackId = trackId,
-                        identifier = track.identifier,
-                        fileName = track.fileName,
-                        title = track.title,
-                        artist = item.creator,
-                        album = item.title,
-                        year = item.year,
-                        durationMs = track.durationMs,
-                        albumArtUrl = item.coverUrl,
-                        localFileUri = Uri.fromFile(destination).toString(),
-                        addedAtMs = System.currentTimeMillis(),
-                    ),
+                    libraryEntity(track, item, trackId, localFileUri = Uri.fromFile(destination).toString()),
                 )
                 _lastError.value = null
                 true
@@ -122,9 +136,48 @@ class ArchiveRepositoryImpl @Inject constructor(
             }
         }
 
+    /**
+     * Jak [addTrackToLibrary], ale bez `downloadToFile` — wpis leci prosto do Room z
+     * `localFileUri = null`, gra z `remoteUrl`. Brak realnego ryzyka błędu sieci (nic tu się nie
+     * pobiera), więc bez stanu `_downloadingTrackIds`/spinnera — wpis pojawia się w [library]
+     * natychmiast.
+     */
+    override suspend fun addTrackToLibraryAsStream(track: ArchiveTrack, item: ArchiveItem): Boolean =
+        withContext(Dispatchers.IO) {
+            val trackId = archiveTrackId(track.identifier, track.fileName)
+            if (archiveLibraryDao.getByTrackId(trackId) != null) return@withContext true
+            archiveLibraryDao.insert(libraryEntity(track, item, trackId, localFileUri = null))
+            true
+        }
+
+    private fun libraryEntity(track: ArchiveTrack, item: ArchiveItem, trackId: Long, localFileUri: String?) =
+        ArchiveLibraryTrackEntity(
+            trackId = trackId,
+            identifier = track.identifier,
+            fileName = track.fileName,
+            title = track.title,
+            artist = item.creator,
+            album = item.title,
+            year = item.year,
+            durationMs = track.durationMs,
+            albumArtUrl = item.coverUrl,
+            localFileUri = localFileUri,
+            remoteUrl = track.audioUrl,
+            category = inferCategory(item.collections)?.name,
+            addedAtMs = System.currentTimeMillis(),
+        )
+
+    /** Odwrotność [ArchiveCategory.collectionQuery] — pierwsza kolekcja itemu, która pasuje do jednej z czterech kategorii UI. */
+    private fun inferCategory(collections: List<String>): ArchiveCategory? {
+        val normalized = collections.map { it.lowercase() }
+        return ArchiveCategory.entries.firstOrNull { category ->
+            CATEGORY_COLLECTION_IDS.getValue(category).any { it in normalized }
+        }
+    }
+
     override suspend fun removeTrackFromLibrary(trackId: Long) = withContext(Dispatchers.IO) {
         val entity = archiveLibraryDao.getByTrackId(trackId) ?: return@withContext
-        runCatching { Uri.parse(entity.localFileUri).path?.let { File(it).delete() } }
+        runCatching { entity.localFileUri?.let { Uri.parse(it).path?.let { path -> File(path).delete() } } }
         archiveLibraryDao.delete(trackId)
     }
 
@@ -241,8 +294,27 @@ class ArchiveRepositoryImpl @Inject constructor(
         ArchiveCategory.RADIO -> "(collection:radioprograms OR collection:oldtimeradio)"
     }
 
+    /**
+     * Odwrotność [collectionQuery] jako zbiory id (nie fragment zapytania Lucene) — do [inferCategory].
+     * MUSZĄ pozostać w sync z [collectionQuery] (świadomie osobna definicja zamiast parsowania
+     * stringa zapytania z powrotem na id kolekcji — prościej i mniej kruche).
+     */
+    private val CATEGORY_COLLECTION_IDS = mapOf(
+        ArchiveCategory.MUSIC to setOf("etree", "netlabels"),
+        ArchiveCategory.PODCASTS to setOf("podcasts"),
+        ArchiveCategory.AUDIOBOOKS to setOf("audio_bookspoetry"),
+        ArchiveCategory.RADIO to setOf("radioprograms", "oldtimeradio"),
+    )
+
     override suspend fun tracksForItem(identifier: String): List<ArchiveTrack> = withContext(Dispatchers.IO) {
-        tracksCache.getOrPut(identifier) { fetchTracks(identifier) }
+        // Zgłoszenie: ten sam bug co przy JRE w PodcastRepositoryImpl — `getOrPut` z pustą listą
+        // (np. po przejściowym błędzie sieci w `fetchJson`) trwale "zatruwał" cache na całe życie
+        // procesu: "Brak dostępnych ścieżek audio" zostawało nawet po ponownym wejściu w item,
+        // mimo że metadane na archive.org są sprawne. Cache'ujemy tylko NIEPUSTY wynik.
+        tracksCache[identifier]?.let { return@withContext it }
+        val tracks = fetchTracks(identifier)
+        if (tracks.isNotEmpty()) tracksCache[identifier] = tracks
+        tracks
     }
 
     /**
@@ -352,6 +424,7 @@ class ArchiveRepositoryImpl @Inject constructor(
                 year = doc.optString("year").toIntOrNull(),
                 coverUrl = "https://archive.org/services/img/$identifier",
                 filesCount = doc.optInt("files_count", 0),
+                collections = doc.opt("collection").toStringList(),
             )
         }
         return rankBySize(items)
@@ -412,19 +485,33 @@ class ArchiveRepositoryImpl @Inject constructor(
 
     private fun formatRank(format: String): Int = AUDIO_FORMAT_PRIORITY.indexOf(format).let { if (it < 0) Int.MAX_VALUE else it }
 
-    private fun fetchJson(url: String): String? = try {
-        val request = Request.Builder().url(url).header("User-Agent", "AuroraMusicPlayer/1.0").build()
-        httpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                Log.e(TAG, "fetchJson(): HTTP ${response.code} dla $url")
-                null
-            } else {
-                response.body?.string()
+    /**
+     * Ten sam problem i to samo lekarstwo co `PodcastRepositoryImpl.fetchXml` (JRE, Etap 40-48):
+     * pojedynczy przejściowy błąd sieci (np. urwane połączenie w trakcie ściągania metadanych
+     * archive.org) dawał trwałe "Brak dostępnych ścieżek audio", mimo że drugie podejście się
+     * udaje. 3 próby, krótki odstęp — już na wątku IO (`Dispatchers.IO` w `tracksForItem`), więc
+     * blokujące `Thread.sleep` jest tu bezpieczne.
+     */
+    private fun fetchJson(url: String): String? {
+        var lastError: Exception? = null
+        repeat(MAX_FETCH_ATTEMPTS) { attempt ->
+            try {
+                val request = Request.Builder().url(url).header("User-Agent", "AuroraMusicPlayer/1.0").build()
+                httpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        Log.e(TAG, "fetchJson(): HTTP ${response.code} dla $url (próba ${attempt + 1})")
+                    } else {
+                        return response.body?.string()
+                    }
+                }
+            } catch (e: Exception) {
+                lastError = e
+                Log.e(TAG, "fetchJson(): błąd sieci dla $url (próba ${attempt + 1}/$MAX_FETCH_ATTEMPTS)", e)
             }
+            if (attempt < MAX_FETCH_ATTEMPTS - 1) Thread.sleep(FETCH_RETRY_DELAY_MS)
         }
-    } catch (e: Exception) {
-        Log.e(TAG, "fetchJson(): błąd sieci dla $url", e)
-        null
+        lastError?.let { Log.e(TAG, "fetchJson(): wszystkie próby nieudane dla $url", it) }
+        return null
     }
 
     /** `creator` bywa Stringiem albo JSONArray (niespójne metadane IA między itemami). */
@@ -432,6 +519,13 @@ class ArchiveRepositoryImpl @Inject constructor(
         is String -> this
         is JSONArray -> (0 until length()).mapNotNull { optString(it).ifBlank { null } }.joinToString(", ")
         else -> ""
+    }
+
+    /** `collection` ma tę samą niespójność co `creator` — jeden item bywa w wielu kolekcjach naraz. */
+    private fun Any?.toStringList(): List<String> = when (this) {
+        is String -> listOf(this)
+        is JSONArray -> (0 until length()).mapNotNull { optString(it).ifBlank { null } }
+        else -> emptyList()
     }
 
     /** `length` bywa sekundami jako liczba ("157.13") albo "MM:SS"/"HH:MM:SS" — niespójne między formatami plików. */
@@ -463,6 +557,8 @@ class ArchiveRepositoryImpl @Inject constructor(
         const val MAX_TASTE_ARTISTS = 5
         const val MAX_TASTE_GENRES = 3
         const val PER_QUERY_LIMIT = 8
+        const val MAX_FETCH_ATTEMPTS = 3
+        const val FETCH_RETRY_DELAY_MS = 500L
 
         /** Patrz [rankBySize] — progi `files_count` do rozróżnienia pojedynczej ścieżki od pełnego albumu. */
         const val SINGLE_TRACK_MAX_FILES = 4

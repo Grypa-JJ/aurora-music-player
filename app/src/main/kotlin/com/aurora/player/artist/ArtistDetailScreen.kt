@@ -1,5 +1,6 @@
 package com.aurora.player.artist
 
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -112,72 +113,75 @@ fun ArtistDetailScreen(
                 color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).padding(start = tokens.spacing.xs),
+                modifier = Modifier.weight(1f).padding(start = tokens.spacing.xs).basicMarquee(),
             )
         }
 
-        artistInfo?.bannerUrl?.let { bannerUrl ->
-            AsyncImage(
-                model = bannerUrl,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = tokens.spacing.m)
-                    .height(100.dp)
-                    .clip(RoundedCornerShape(12.dp)),
-            )
-        }
-
-        val tags = listOfNotNull(artistInfo?.genre, artistInfo?.style, artistInfo?.mood).distinct()
-        if (tags.isNotEmpty()) {
-            Text(
-                text = tags.joinToString(" • "),
-                style = AuroraTextStyles.Label,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.xs),
-            )
-        }
-
-        artistInfo?.biography?.let { biography ->
-            var isBiographyExpanded by remember(artistName) { mutableStateOf(false) }
-            Text(
-                text = biography,
-                style = AuroraTextStyles.Body,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
-                maxLines = if (isBiographyExpanded) Int.MAX_VALUE else 4,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.xs)
-                    .clickable { isBiographyExpanded = !isBiographyExpanded },
-            )
-            Text(
-                text = if (isBiographyExpanded) "Pokaż mniej" else "Pokaż więcej",
-                style = AuroraTextStyles.Label,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier
-                    .padding(horizontal = tokens.spacing.m)
-                    .clickable { isBiographyExpanded = !isBiographyExpanded },
-            )
-        }
-
-        Row(modifier = Modifier.fillMaxWidth().padding(horizontal = tokens.spacing.m)) {
-            Text(
-                text = "${artist.tracks.size} utworów",
-                style = AuroraTextStyles.Label,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                modifier = Modifier.weight(1f),
-            )
-            Button(onClick = { viewModel.onPlayTracks(artist.tracks) }) {
-                Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                Text(text = "Odtwórz", modifier = Modifier.padding(start = tokens.spacing.xs))
-            }
-        }
-
+        // Zgłoszenie: banner/tagi/bio/licznik+Odtwórz były NA STAŁE nad listą — ten sam problem co
+        // album/playlista/Genius, ten sam fix: pierwszy element `LazyColumn`, przewija się razem z
+        // listą utworów zamiast zajmować stałą przestrzeń (tu szczególnie dużą — bio bywa długie).
         LazyColumn(
             contentPadding = PaddingValues(horizontal = tokens.spacing.s, vertical = tokens.spacing.m),
         ) {
+            item {
+                Column(modifier = Modifier.padding(horizontal = tokens.spacing.xs)) {
+                    artistInfo?.bannerUrl?.let { bannerUrl ->
+                        AsyncImage(
+                            model = bannerUrl,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(100.dp)
+                                .clip(RoundedCornerShape(12.dp)),
+                        )
+                    }
+
+                    val tags = listOfNotNull(artistInfo?.genre, artistInfo?.style, artistInfo?.mood).distinct()
+                    if (tags.isNotEmpty()) {
+                        Text(
+                            text = tags.joinToString(" • "),
+                            style = AuroraTextStyles.Label,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.fillMaxWidth().padding(vertical = tokens.spacing.xs),
+                        )
+                    }
+
+                    artistInfo?.biography?.let { biography ->
+                        var isBiographyExpanded by remember(artistName) { mutableStateOf(false) }
+                        Text(
+                            text = biography,
+                            style = AuroraTextStyles.Body,
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f),
+                            maxLines = if (isBiographyExpanded) Int.MAX_VALUE else 4,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = tokens.spacing.xs)
+                                .clickable { isBiographyExpanded = !isBiographyExpanded },
+                        )
+                        Text(
+                            text = if (isBiographyExpanded) "Pokaż mniej" else "Pokaż więcej",
+                            style = AuroraTextStyles.Label,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.clickable { isBiographyExpanded = !isBiographyExpanded },
+                        )
+                    }
+
+                    Row(modifier = Modifier.fillMaxWidth().padding(top = tokens.spacing.s)) {
+                        Text(
+                            text = "${artist.tracks.size} utworów",
+                            style = AuroraTextStyles.Label,
+                            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                            modifier = Modifier.weight(1f),
+                        )
+                        Button(onClick = { viewModel.onPlayTracks(artist.tracks) }) {
+                            Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Text(text = "Odtwórz", modifier = Modifier.padding(start = tokens.spacing.xs))
+                        }
+                    }
+                }
+            }
             itemsIndexed(artist.tracks, key = { _, track -> track.id }) { index, track ->
                 TrackListItem(
                     title = track.title,

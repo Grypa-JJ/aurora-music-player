@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -82,6 +83,7 @@ fun AddPodcastSheet(
     val searchResults by viewModel.podcastSearchResults.collectAsState()
     val isSearching by viewModel.isSearchingPodcasts.collectAsState()
     val isPodcastIndexConfigured by viewModel.isPodcastIndexConfigured.collectAsState()
+    val transcriptAvailability by viewModel.podcastTranscriptAvailability.collectAsState()
 
     var feedUrl by remember { mutableStateOf("") }
     var searchQuery by remember { mutableStateOf("") }
@@ -89,6 +91,19 @@ fun AddPodcastSheet(
     var showCountryPicker by remember { mutableStateOf(false) }
     var selectedCountryCode by remember { mutableStateOf<String?>(null) }
     var hasResolvedInitialCountry by remember { mutableStateOf(false) }
+    // Zgłoszenie: "przycisk szukaj tylko z tłumaczeniem" — filtr do listy wyników, gdy user
+    // konkretnie szuka anglojęzycznego podcastu z dostępną transkrypcją/tłumaczeniem. Lokalny stan
+    // UI (nie ViewModel) — dotyczy wyłącznie tego, co pokazujemy w TYM arkuszu, nie samych danych.
+    var onlyWithTranscript by remember { mutableStateOf(false) }
+    // Promowanie "ma transkrypcję" na górę listy — świadomie liczone TU, lokalnie, a nie w
+    // ViewModelu: `podcastSearchResults` zasila też siatkę "Proponowane" w PodcastsScreen, gdzie
+    // przesortowanie byłoby niepożądane (zgłoszenie: transkrypcja jest rzadka, więc kuratorskie
+    // propozycje miałyby się zrobić losowe/zdominowane przez 2-3 podcasty). Tu, w wynikach
+    // wyszukiwania, promowanie ma sens i było wprost proszone.
+    val filteredResults = remember(searchResults, transcriptAvailability, onlyWithTranscript) {
+        val base = if (onlyWithTranscript) searchResults.filter { transcriptAvailability[it.feedUrl] == true } else searchResults
+        base.sortedByDescending { transcriptAvailability[it.feedUrl] == true }
+    }
 
     fun onCountryResolved(code: String) {
         selectedCountryCode = code
@@ -204,8 +219,39 @@ fun AddPodcastSheet(
                         }
                     },
                 ),
-                modifier = Modifier.fillMaxWidth().padding(top = tokens.spacing.s, bottom = tokens.spacing.s),
+                modifier = Modifier.fillMaxWidth().padding(top = tokens.spacing.s),
             )
+
+            // Zgłoszenie: filtr "tylko z tłumaczeniem" — do przeglądania anglojęzycznych podcastów
+            // z dostępną transkrypcją (→ tłumaczenie EN→PL w Now Playing, patrz Etap 54).
+            Row(
+                modifier = Modifier
+                    .padding(top = tokens.spacing.s, bottom = tokens.spacing.s)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(
+                        if (onlyWithTranscript) {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                        } else {
+                            MaterialTheme.colorScheme.background
+                        },
+                    )
+                    .clickable { onlyWithTranscript = !onlyWithTranscript }
+                    .padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Translate,
+                    contentDescription = null,
+                    tint = if (onlyWithTranscript) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    modifier = Modifier.size(16.dp),
+                )
+                Text(
+                    text = "Tylko z tłumaczeniem",
+                    style = AuroraTextStyles.Label,
+                    color = if (onlyWithTranscript) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    modifier = Modifier.padding(start = tokens.spacing.xs),
+                )
+            }
         }
 
         when {
@@ -215,11 +261,12 @@ fun AddPodcastSheet(
                 }
             }
 
-            searchResults.isNotEmpty() -> {
+            filteredResults.isNotEmpty() -> {
                 LazyColumn(modifier = Modifier.height(360.dp).padding(bottom = tokens.spacing.l)) {
-                    items(searchResults, key = { it.feedUrl }) { result ->
+                    items(filteredResults, key = { it.feedUrl }) { result ->
                         PodcastSearchResultRow(
                             result = result,
+                            hasTranscript = transcriptAvailability[result.feedUrl] == true,
                             onClick = {
                                 viewModel.subscribeToPodcast(result.feedUrl) { podcast ->
                                     if (podcast != null) onSubscribed()
@@ -227,6 +274,17 @@ fun AddPodcastSheet(
                             },
                         )
                     }
+                }
+            }
+
+            onlyWithTranscript -> {
+                Box(modifier = Modifier.fillMaxWidth().height(120.dp), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "Żaden z wyników (jeszcze) nie ma potwierdzonej transkrypcji.",
+                        style = AuroraTextStyles.Body,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        modifier = Modifier.padding(horizontal = tokens.spacing.l),
+                    )
                 }
             }
 
@@ -275,7 +333,12 @@ fun AddPodcastSheet(
 }
 
 @Composable
-private fun PodcastSearchResultRow(result: PodcastSearchResult, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun PodcastSearchResultRow(
+    result: PodcastSearchResult,
+    hasTranscript: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val tokens = LocalAuroraTokens.current
     Row(
         modifier = modifier
@@ -305,6 +368,17 @@ private fun PodcastSearchResultRow(result: PodcastSearchResult, onClick: () -> U
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+            )
+        }
+        // Etap 54, zgłoszenie: "te ikonki napisów już w wyszukiwaniu" — patrz
+        // `LibraryViewModel.checkTranscriptAvailability` (sprawdzane w tle, mapa dochodzi
+        // stopniowo, więc ikonka może "domalować się" chwilę po pokazaniu wyników).
+        if (hasTranscript) {
+            Icon(
+                imageVector = Icons.Filled.Translate,
+                contentDescription = "Dostępna transkrypcja/tłumaczenie",
+                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                modifier = Modifier.padding(end = tokens.spacing.xs).size(16.dp),
             )
         }
         if (result.source == PodcastSearchSource.PODCAST_INDEX) {

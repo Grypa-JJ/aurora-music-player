@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,11 +43,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import coil3.compose.AsyncImage
+import com.aurora.player.archive.ArchiveLibraryGroupRow
 import com.aurora.player.designsystem.components.GridRows
 import com.aurora.player.designsystem.components.ProposedGridTile
 import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.ContentDomain
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
+import com.aurora.player.domain.model.ArchiveCategory
 import com.aurora.player.domain.model.Podcast
 import com.aurora.player.library.LibraryViewModel
 import com.aurora.player.location.CountryPickerSheet
@@ -64,12 +67,15 @@ fun PodcastsScreen(
     viewModel: LibraryViewModel,
     onBack: () -> Unit,
     onOpenPodcast: (feedUrl: String) -> Unit,
+    onOpenArchiveItem: (identifier: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val subscriptions by viewModel.podcastSubscriptions.collectAsState()
     val recommendations by viewModel.podcastSearchResults.collectAsState()
+    val archiveGroups by viewModel.archiveLibraryByCategory.collectAsState()
+    val archivePodcasts = archiveGroups[ArchiveCategory.PODCASTS].orEmpty()
     val tokens = LocalAuroraTokens.current
     var showAddSheet by remember { mutableStateOf(false) }
     var showCountryPicker by remember { mutableStateOf(false) }
@@ -129,6 +135,50 @@ fun PodcastsScreen(
         }
 
         Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+            // Zgłoszenie: to, co user już ma, ma być widoczne od razu, bez przewijania przez
+            // propozycje — "Twoje subskrypcje" (+ Archiwum) najpierw, "Proponowane" niżej.
+            Text(
+                text = "Twoje subskrypcje",
+                style = AuroraTextStyles.Label,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                modifier = Modifier.padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s),
+            )
+            if (subscriptions.isEmpty() && archivePodcasts.isEmpty()) {
+                Text(
+                    text = "Brak subskrypcji — dotknij propozycji poniżej albo + u góry, żeby dodać podcast po adresie RSS.",
+                    style = AuroraTextStyles.Body,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s),
+                )
+            } else if (subscriptions.isNotEmpty()) {
+                Column(modifier = Modifier.padding(horizontal = tokens.spacing.m)) {
+                    subscriptions.forEach { podcast ->
+                        PodcastRow(
+                            podcast = podcast,
+                            onClick = { onOpenPodcast(podcast.feedUrl) },
+                            modifier = Modifier.padding(bottom = tokens.spacing.m),
+                        )
+                    }
+                }
+            }
+
+            // Etap 53, zgłoszenie: pobrane/streamowane podcasty z Internet Archive (kategoria
+            // "Podcasty" w Archiwum) mają być widoczne TUTAJ, obok realnych subskrypcji RSS, nie
+            // tylko w generycznym ekranie "Pobrane". Tap otwiera ten sam ArchiveItemDetailScreen
+            // co z Archiwum, bez duplikowania logiki pobierania/streamu.
+            if (archivePodcasts.isNotEmpty()) {
+                Column(modifier = Modifier.padding(horizontal = tokens.spacing.m)) {
+                    archivePodcasts.forEach { group ->
+                        ArchiveLibraryGroupRow(
+                            group = group,
+                            fallbackIcon = Icons.Filled.Podcasts,
+                            onClick = { onOpenArchiveItem(group.identifier) },
+                            modifier = Modifier.padding(bottom = tokens.spacing.m),
+                        )
+                    }
+                }
+            }
+
             if (recommendations.isNotEmpty()) {
                 Text(
                     text = "Proponowane",
@@ -148,31 +198,6 @@ fun PodcastsScreen(
                             }
                         },
                     )
-                }
-            }
-
-            Text(
-                text = "Twoje subskrypcje",
-                style = AuroraTextStyles.Label,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                modifier = Modifier.padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s),
-            )
-            if (subscriptions.isEmpty()) {
-                Text(
-                    text = "Brak subskrypcji — dotknij propozycji powyżej albo + u góry, żeby dodać podcast po adresie RSS.",
-                    style = AuroraTextStyles.Body,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                    modifier = Modifier.padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s),
-                )
-            } else {
-                Column(modifier = Modifier.padding(horizontal = tokens.spacing.m)) {
-                    subscriptions.forEach { podcast ->
-                        PodcastRow(
-                            podcast = podcast,
-                            onClick = { onOpenPodcast(podcast.feedUrl) },
-                            modifier = Modifier.padding(bottom = tokens.spacing.m),
-                        )
-                    }
                 }
             }
         }
@@ -228,6 +253,7 @@ private fun PodcastRow(podcast: Podcast, onClick: () -> Unit, modifier: Modifier
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.basicMarquee(),
             )
             Text(
                 text = podcast.author,

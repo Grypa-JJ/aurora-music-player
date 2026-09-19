@@ -3,6 +3,7 @@ package com.aurora.player.domain.repository
 import com.aurora.player.domain.model.ArchiveCategory
 import com.aurora.player.domain.model.ArchiveDownload
 import com.aurora.player.domain.model.ArchiveItem
+import com.aurora.player.domain.model.ArchiveLibraryGroup
 import com.aurora.player.domain.model.ArchiveTrack
 import com.aurora.player.domain.model.Track
 import kotlinx.coroutines.flow.StateFlow
@@ -53,10 +54,19 @@ interface ArchiveRepository {
     ): List<ArchiveItem>
 
     /**
-     * Ścieżki pobrane NA STAŁE do biblioteki (patrz [addTrackToLibrary]) — grają offline, bez sieci,
-     * dokładnie jak lokalne pliki. DESIGN.md Etap 40.
+     * Ścieżki w bibliotece Archiwum — pobrane NA STAŁE (grają offline) LUB dodane jako stream (patrz
+     * [addTrackToLibraryAsStream]). DESIGN.md Etap 40, Etap 53.
      */
     val library: StateFlow<List<Track>>
+
+    /**
+     * Jak [library], ale pogrupowane z powrotem w [ArchiveLibraryGroup] (jeden item = jedna grupa)
+     * i podzielone wg [ArchiveCategory] wywnioskowanej przy dodawaniu — do sekcji "Pobrane z
+     * Archiwum" w ekranach Audiobooki/Podkasty (Etap 53, zgłoszenie: "pobieranie ma dodawać
+     * audiobooki/podcasty z Archiwum obok tych z LibriVox/realnych subskrypcji"). Pozycje bez
+     * rozpoznanej kategorii są pominięte (nie trafiają do żadnego kubełka).
+     */
+    val libraryByCategory: StateFlow<Map<ArchiveCategory, List<ArchiveLibraryGroup>>>
 
     /** `Track.id` ścieżek aktualnie pobieranych — do pokazania spinnera w UI. */
     val downloadingTrackIds: StateFlow<Set<Long>>
@@ -74,6 +84,17 @@ interface ArchiveRepository {
      */
     suspend fun addTrackToLibrary(track: ArchiveTrack, item: ArchiveItem): Boolean
 
-    /** Usuwa lokalny plik i wpis z [library]. */
+    /**
+     * Jak [addTrackToLibrary], ale BEZ pobierania pliku — wpis w [library] gra bezpośrednio z URL-a
+     * archive.org (patrz `ArchiveLibraryTrackEntity.remoteUrl`). User: "przycisk streaming, dodaje
+     * tylko do biblioteki w postaci streamingu, żeby cross między urządzeniami mógł jakoś działać".
+     * Sam wpis lokalny (Room) działa od razu; realna synchronizacja tego wpisu NA INNE zalogowane
+     * urządzenie wymaga osobnej warstwy backendu (Supabase Postgrest jest zainstalowany, ale
+     * NIEUŻYWANY do żadnych danych poza samym logowaniem — patrz audyt Etap 53) i nie jest tu
+     * jeszcze zrobiona.
+     */
+    suspend fun addTrackToLibraryAsStream(track: ArchiveTrack, item: ArchiveItem): Boolean
+
+    /** Usuwa lokalny plik (jeśli był) i wpis z [library]. */
     suspend fun removeTrackFromLibrary(trackId: Long)
 }

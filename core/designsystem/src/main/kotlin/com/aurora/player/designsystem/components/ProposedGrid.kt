@@ -2,6 +2,7 @@ package com.aurora.player.designsystem.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -42,9 +43,17 @@ fun <T> GridRows(
 ) {
     Column(modifier = modifier.padding(horizontal = horizontalPadding)) {
         items.chunked(2).forEach { pair ->
-            Row(modifier = Modifier.fillMaxWidth().padding(bottom = spacing)) {
+            // Zgłoszenie: kafelki wyglądały nierówno — `padding(start = spacing)` liczony TYLKO na
+            // drugim `Box` zabierał mu szerokość z jego własnej puli `weight(1f)`, więc jego
+            // kwadratowa okładka (aspectRatio(1f) liczone od szerokości) wychodziła kilka px niższa
+            // niż u sąsiada. `Arrangement.spacedBy` dzieli odstęp RÓWNO, obie kolumny zostają tej
+            // samej szerokości.
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = spacing),
+                horizontalArrangement = Arrangement.spacedBy(spacing),
+            ) {
                 Box(modifier = Modifier.weight(1f)) { tile(pair[0]) }
-                Box(modifier = Modifier.weight(1f).padding(start = spacing)) {
+                Box(modifier = Modifier.weight(1f)) {
                     if (pair.size > 1) tile(pair[1])
                 }
             }
@@ -99,6 +108,11 @@ fun ProposedGridTile(
                 text = title,
                 style = AuroraTextStyles.Label,
                 color = MaterialTheme.colorScheme.onSurface,
+                // Zgłoszenie: kafelki w rzędzie wyglądały nierówno — `Row` nie rozciąga dzieci do
+                // wspólnej wysokości, więc tytuł na 1 linię dawał krótszy kafelek niż sąsiad z
+                // tytułem na 2 linie. `minLines` rezerwuje stałą wysokość niezależnie od realnej
+                // liczby linii, bez ręcznego wyrównywania wysokości Row/Box.
+                minLines = 2,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )

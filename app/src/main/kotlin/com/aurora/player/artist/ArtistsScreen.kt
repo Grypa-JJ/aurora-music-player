@@ -1,6 +1,7 @@
 package com.aurora.player.artist
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,13 +33,20 @@ import com.aurora.player.library.ArtistGroup
 import com.aurora.player.library.LibraryViewModel
 import com.aurora.player.library.groupTracksByArtist
 
-/** Lista wykonawców — DESIGN.md Etap 22/23 (tab "Wykonawcy" z pierwotnej wizji, sekcja 3.1). */
+/**
+ * Lista wykonawców — DESIGN.md Etap 22/23 (tab "Wykonawcy" z pierwotnej wizji, sekcja 3.1).
+ *
+ * Zgłoszenie: `header` to opcjonalny slot na wyszukiwarkę/skróty/przełącznik tabów z
+ * [LibraryScreen] — renderowany jako pierwszy element listy, więc przewija się razem z
+ * wykonawcami zamiast zajmować stałą przestrzeń nad nią (ten sam wzorzec co w `AlbumsScreen`).
+ */
 @Composable
 fun ArtistsScreen(
     viewModel: LibraryViewModel,
     searchQuery: String,
     onOpenArtist: (String) -> Unit,
     modifier: Modifier = Modifier,
+    header: (@Composable () -> Unit)? = null,
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val tokens = LocalAuroraTokens.current
@@ -50,12 +58,15 @@ fun ArtistsScreen(
     }
 
     if (filteredArtists.isEmpty()) {
-        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(
-                text = if (searchQuery.isBlank()) "Brak wykonawców." else "Brak wyników dla „$searchQuery”",
-                style = AuroraTextStyles.Body,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-            )
+        Column(modifier = modifier.fillMaxSize()) {
+            header?.invoke()
+            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Text(
+                    text = if (searchQuery.isBlank()) "Brak wykonawców." else "Brak wyników dla „$searchQuery”",
+                    style = AuroraTextStyles.Body,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                )
+            }
         }
         return
     }
@@ -64,6 +75,9 @@ fun ArtistsScreen(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = tokens.spacing.s, vertical = tokens.spacing.s),
     ) {
+        if (header != null) {
+            item { header() }
+        }
         items(filteredArtists, key = { it.name }) { artist ->
             ArtistRow(artist = artist, onClick = { onOpenArtist(artist.name) })
         }
@@ -101,6 +115,7 @@ private fun ArtistRow(artist: ArtistGroup, onClick: () -> Unit, modifier: Modifi
                 color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.basicMarquee(),
             )
             Text(
                 text = "${artist.tracks.size} utworów",

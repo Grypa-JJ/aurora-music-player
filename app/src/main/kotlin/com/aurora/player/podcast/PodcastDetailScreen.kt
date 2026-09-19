@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -137,8 +138,17 @@ fun PodcastDetailScreen(
             }
             Column(modifier = Modifier.padding(start = tokens.spacing.m)) {
                 Text(text = podcast.author, style = AuroraTextStyles.Body, color = MaterialTheme.colorScheme.onBackground)
+                // Zgłoszenie: "czy da się pokazać, które podcasty mają transkrypcję" — feed jest i
+                // tak już sparsowany (lista odcinków), więc to darmowa informacja, bez dodatkowego
+                // zapytania sieciowego. Większość feedów (sprawdzone ręcznie: ~2 na 16 dużych
+                // anglojęzycznych podcastów) NIE publikuje `<podcast:transcript>` — stąd warunek.
+                val transcriptCount = remember(episodes) { episodes.count { it.transcriptUrl != null } }
                 Text(
-                    text = "${episodes.size} odcinków",
+                    text = if (transcriptCount > 0) {
+                        "${episodes.size} odcinków • $transcriptCount z transkrypcją"
+                    } else {
+                        "${episodes.size} odcinków"
+                    },
                     style = AuroraTextStyles.Label,
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
                 )
@@ -217,7 +227,7 @@ private fun EpisodeRow(episode: PodcastEpisode, isCurrentlyPlaying: Boolean, onC
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(tokens.spacing.xs)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(tokens.spacing.xs)) {
                 Text(
                     text = formatPublishedDate(episode.publishedAtMs),
                     style = AuroraTextStyles.Label,
@@ -228,6 +238,16 @@ private fun EpisodeRow(episode: PodcastEpisode, isCurrentlyPlaying: Boolean, onC
                         text = "• ${formatDuration(episode.durationMs)}",
                         style = AuroraTextStyles.Label,
                         color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                    )
+                }
+                // Etap 54: transkrypcja (→ tłumaczenie w Now Playing) dostępna dla TEGO odcinka —
+                // patrz `TranscriptChannelContent`/`onTranslateTranscript`.
+                if (episode.transcriptUrl != null) {
+                    Icon(
+                        imageVector = Icons.Filled.Translate,
+                        contentDescription = "Dostępna transkrypcja/tłumaczenie",
+                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                        modifier = Modifier.size(14.dp),
                     )
                 }
             }

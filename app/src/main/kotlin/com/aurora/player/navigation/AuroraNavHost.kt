@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
@@ -21,6 +22,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -307,6 +310,9 @@ fun AuroraNavHost(
                         viewModel = libraryViewModel,
                         onBack = { navController.popBackStack() },
                         onOpenPodcast = { feedUrl -> navController.navigate("podcast_detail/${encodeRouteArg(feedUrl)}") },
+                        onOpenArchiveItem = { identifier ->
+                            navController.navigate("archive_item_detail/${encodeRouteArg(identifier)}")
+                        },
                     )
                 }
                 composable(
@@ -328,6 +334,9 @@ fun AuroraNavHost(
                         viewModel = libraryViewModel,
                         onBack = { navController.popBackStack() },
                         onOpenAudiobook = { id -> navController.navigate("audiobook_detail/${encodeRouteArg(id)}") },
+                        onOpenArchiveItem = { identifier ->
+                            navController.navigate("archive_item_detail/${encodeRouteArg(identifier)}")
+                        },
                     )
                 }
                 composable(
@@ -378,11 +387,24 @@ fun AuroraNavHost(
         }
 
         if (showBottomChrome) {
+            // Zgłoszenie: MiniPlayerBar (własny blur-pill) i AuroraBottomNav (w pełni przezroczysty,
+            // patrz jego KDoc) osobno nie dawały nic narysowanego W SZCZELINIE między nimi — treść
+            // listy pod spodem prześwitywała surowo i "nie komponowała się" z pływającym paskiem.
+            // Jeden wspólny gradient (przezroczysty → czarny ~55%) na całej grupie, od mniej więcej
+            // połowy wysokości MiniPlayerBar w dół, daje spójne płynne przejście zamiast dwóch
+            // osobnych, nieszczelnych warstw.
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .onSizeChanged { size -> bottomChromeHeight = with(density) { size.height.toDp() } },
+                    .onSizeChanged { size -> bottomChromeHeight = with(density) { size.height.toDp() } }
+                    .background(
+                        Brush.verticalGradient(
+                            0f to Color.Transparent,
+                            0.35f to Color.Transparent,
+                            1f to Color.Black.copy(alpha = 0.55f),
+                        ),
+                    ),
             ) {
                 playbackState.currentTrack?.let { track ->
                     MiniPlayerBar(

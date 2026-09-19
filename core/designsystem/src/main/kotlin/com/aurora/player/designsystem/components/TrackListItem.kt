@@ -1,6 +1,7 @@
 package com.aurora.player.designsystem.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,6 +14,7 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.OfflinePin
 import androidx.compose.material3.Icon
@@ -45,6 +47,7 @@ fun TrackListItem(
     onMoreClick: (() -> Unit)? = null,
     isCloudTrack: Boolean = false,
     isSavedOffline: Boolean = false,
+    isStreamed: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val tokens = LocalAuroraTokens.current
@@ -93,6 +96,10 @@ fun TrackListItem(
                 },
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                // Zgłoszenie: tytuły dłuższe niż dostępna szerokość mają przesuwać się w poziomie,
+                // żeby dało się je przeczytać w całości, zamiast ucinać na stałe wielokropkiem.
+                // No-op gdy tytuł się mieści — `basicMarquee()` sam wykrywa, czy w ogóle ma sens.
+                modifier = Modifier.basicMarquee(),
             )
             Text(
                 text = artist,
@@ -119,6 +126,19 @@ fun TrackListItem(
                 imageVector = Icons.Filled.OfflinePin,
                 contentDescription = "Zapisane offline",
                 tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                modifier = Modifier
+                    .padding(end = tokens.spacing.xs)
+                    .size(14.dp),
+            )
+        }
+
+        // Etap 53: w bibliotece, ale BEZ lokalnego pliku — gra streamem, patrz `isSavedOffline` dla
+        // przeciwieństwa (pobrane na stałe). Nigdy oba naraz — patrz wywołujący.
+        if (isStreamed) {
+            Icon(
+                imageVector = Icons.Filled.CloudQueue,
+                contentDescription = "W bibliotece jako stream",
+                tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.45f),
                 modifier = Modifier
                     .padding(end = tokens.spacing.xs)
                     .size(14.dp),

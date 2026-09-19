@@ -2,6 +2,8 @@ package com.aurora.player.playback
 
 import android.app.PendingIntent
 import android.content.Intent
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -92,8 +94,22 @@ class PlaybackService : MediaLibraryService() {
         val dataSourceFactory = DefaultDataSource.Factory(this, cloudHttpDataSourceFactory)
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
 
+        // Zgłoszenie: Android Auto wykrywa appkę i pokazuje layout, ale nie gra dźwięku na
+        // głośniki auta. ExoPlayer ma sensowne AudioAttributes domyślnie, ale bez jawnego
+        // `usage = USAGE_MEDIA` część odbiorników audio w samochodzie (Bluetooth A2DP/AAOS) nie
+        // rozpoznaje strumienia jako "media" do routingu na głośniki — jawne ustawienie +
+        // `setHandleAudioBecomingNoisy` (pauza przy odłączeniu audio, np. rozłączenie z autem) to
+        // standardowy fix dla tej dokładnie klasy problemu ("połączone, sterowanie działa, ciszej").
         val player = ExoPlayer.Builder(this, renderersFactory)
             .setMediaSourceFactory(mediaSourceFactory)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                    .build(),
+                /* handleAudioFocus = */ true,
+            )
+            .setHandleAudioBecomingNoisy(true)
             .build()
 
         val sessionActivityIntent = PendingIntent.getActivity(

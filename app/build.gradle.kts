@@ -145,5 +145,10 @@ dependencies {
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
 
+    // Tłumaczenie transkrypcji podkastów (EN→PL, DESIGN.md Etap 54) — model offline pobierany
+    // NA URZĄDZENIU, zero klucza API, zero kosztu za żądanie (w przeciwieństwie do chmurowego
+    // tłumaczenia/STT) — user świadomie wybrał ten kompromis (transkrypcja z feedu, nie live STT).
+    implementation(libs.mlkit.translate)
+
     testImplementation(libs.junit)
 }

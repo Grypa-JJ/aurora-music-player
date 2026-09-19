@@ -1,6 +1,7 @@
 package com.aurora.player.audiobook
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,12 +36,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import com.aurora.player.archive.ArchiveLibraryGroupRow
 import com.aurora.player.designsystem.components.GridRows
 import com.aurora.player.designsystem.components.ProposedGridTile
 import com.aurora.player.designsystem.theme.AuroraTextStyles
 import com.aurora.player.designsystem.theme.ContentDomain
 import com.aurora.player.designsystem.theme.LocalAuroraTokens
 import com.aurora.player.domain.model.Audiobook
+import com.aurora.player.domain.model.ArchiveCategory
 import com.aurora.player.library.LibraryViewModel
 import java.util.Locale
 
@@ -56,10 +59,13 @@ fun AudiobooksScreen(
     viewModel: LibraryViewModel,
     onBack: () -> Unit,
     onOpenAudiobook: (id: String) -> Unit,
+    onOpenArchiveItem: (identifier: String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val library by viewModel.audiobookLibrary.collectAsState()
     val recommendations by viewModel.audiobookSearchResults.collectAsState()
+    val archiveGroups by viewModel.archiveLibraryByCategory.collectAsState()
+    val archiveAudiobooks = archiveGroups[ArchiveCategory.AUDIOBOOKS].orEmpty()
     val tokens = LocalAuroraTokens.current
     var showAddSheet by remember { mutableStateOf(false) }
 
@@ -91,6 +97,50 @@ fun AudiobooksScreen(
         }
 
         Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+            // Zgłoszenie: to, co user już ma, ma być widoczne od razu, bez przewijania przez
+            // propozycje — "Twoja biblioteka" (+ Archiwum) najpierw, "Proponowane" niżej.
+            Text(
+                text = "Twoja biblioteka",
+                style = AuroraTextStyles.Label,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
+                modifier = Modifier.padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s),
+            )
+            if (library.isEmpty() && archiveAudiobooks.isEmpty()) {
+                Text(
+                    text = "Brak audiobooków — dotknij propozycji poniżej albo + u góry, żeby wyszukać książkę z domeny publicznej (LibriVox).",
+                    style = AuroraTextStyles.Body,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s),
+                )
+            } else if (library.isNotEmpty()) {
+                Column(modifier = Modifier.padding(horizontal = tokens.spacing.m)) {
+                    library.forEach { audiobook ->
+                        AudiobookRow(
+                            audiobook = audiobook,
+                            onClick = { onOpenAudiobook(audiobook.id) },
+                            modifier = Modifier.padding(bottom = tokens.spacing.m),
+                        )
+                    }
+                }
+            }
+
+            // Etap 53, zgłoszenie: pobrane/streamowane audiobooki z Internet Archive (kategoria
+            // "Audiobooki" w Archiwum) mają być widoczne TUTAJ, obok tych z LibriVox, nie tylko w
+            // generycznym ekranie "Pobrane". Tap otwiera ten sam ArchiveItemDetailScreen co z
+            // Archiwum — pełna lista ścieżek, bez duplikowania logiki pobierania/streamu.
+            if (archiveAudiobooks.isNotEmpty()) {
+                Column(modifier = Modifier.padding(horizontal = tokens.spacing.m)) {
+                    archiveAudiobooks.forEach { group ->
+                        ArchiveLibraryGroupRow(
+                            group = group,
+                            fallbackIcon = Icons.AutoMirrored.Filled.MenuBook,
+                            onClick = { onOpenArchiveItem(group.identifier) },
+                            modifier = Modifier.padding(bottom = tokens.spacing.m),
+                        )
+                    }
+                }
+            }
+
             if (recommendations.isNotEmpty()) {
                 Text(
                     text = "Proponowane",
@@ -106,31 +156,6 @@ fun AudiobooksScreen(
                         fallbackIcon = Icons.AutoMirrored.Filled.MenuBook,
                         onClick = { viewModel.addAudiobookToLibrary(result.id) { onOpenAudiobook(result.id) } },
                     )
-                }
-            }
-
-            Text(
-                text = "Twoja biblioteka",
-                style = AuroraTextStyles.Label,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-                modifier = Modifier.padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s),
-            )
-            if (library.isEmpty()) {
-                Text(
-                    text = "Brak audiobooków — dotknij propozycji powyżej albo + u góry, żeby wyszukać książkę z domeny publicznej (LibriVox).",
-                    style = AuroraTextStyles.Body,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                    modifier = Modifier.padding(horizontal = tokens.spacing.m, vertical = tokens.spacing.s),
-                )
-            } else {
-                Column(modifier = Modifier.padding(horizontal = tokens.spacing.m)) {
-                    library.forEach { audiobook ->
-                        AudiobookRow(
-                            audiobook = audiobook,
-                            onClick = { onOpenAudiobook(audiobook.id) },
-                            modifier = Modifier.padding(bottom = tokens.spacing.m),
-                        )
-                    }
                 }
             }
         }
@@ -176,6 +201,7 @@ private fun AudiobookRow(audiobook: Audiobook, onClick: () -> Unit, modifier: Mo
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.basicMarquee(),
             )
             Text(
                 text = audiobook.author,

@@ -1,10 +1,7 @@
 package com.aurora.player.navigation
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Home
@@ -20,12 +17,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.currentBackStackEntryAsState
 import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.hazeEffect
-import dev.chrisbanes.haze.materials.HazeMaterials
 
 /**
  * 3 zakładki dolne (Etap 39, DESIGN.md — było 4 w Etapie 37): Home | Biblioteka | Odkrywaj.
@@ -34,12 +28,12 @@ import dev.chrisbanes.haze.materials.HazeMaterials
  * "Teraz odtwarzane" ani "Ustawienia" — Now Playing wjeżdża z mini-playera (swipe/tap), a nie
  * z równorzędnej zakładki (tak jak stary plan Etap 20b zakładał); Ustawienia to ikona na Home.
  *
- * Pasek jest teraz przeźroczysty/pływający (Etap 39, user: "pasek ma być przeźroczysty jak na
- * tym screenie") — `containerColor = Color.Transparent` na [NavigationBar] + prawdziwy blur
- * (Haze `thin`) na wrapującym [Column], ten sam wzorzec co
- * [com.aurora.player.designsystem.components.MiniPlayerBar]. Bez [hazeState] (np. wywołujący
- * ekran jeszcze nie oznaczył treści `Modifier.hazeSource`) pasek dostaje płaski, półprzezroczysty
- * scrim, żeby treść pod nim wciąż była czytelna — nigdy w pełni niewidzialny.
+ * Zgłoszenie: dotychczasowy frosted-glass blur (Haze `thin`) zastąpiony w pełni przezroczystym
+ * tłem — pasek ma odsłaniać maksimum ekranu pod spodem, nie wyglądać jak osobna szyba. Gradient
+ * scrim (przezroczysty → czarny) żyje jeden poziom wyżej, na całej grupie MiniPlayerBar+ten pasek
+ * (patrz `AuroraNavHost`) — TU osobny gradient dawałby podwójne przyciemnienie w miejscu zakładki.
+ * [hazeState] zostaje w sygnaturze (wołający ekran wciąż może go przekazywać), ale nie jest już
+ * używany — blur celowo usunięty.
  */
 private enum class BottomNavTab(val route: String, val label: String, val icon: ImageVector) {
     Home(ROUTE_HOME, "Home", Icons.Filled.Home),
@@ -50,26 +44,8 @@ private enum class BottomNavTab(val route: String, val label: String, val icon: 
 @Composable
 fun AuroraBottomNav(navController: NavHostController, hazeState: HazeState? = null) {
     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
-    val surfaceColor = MaterialTheme.colorScheme.surface
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(
-                if (hazeState != null) {
-                    Modifier.hazeEffect(state = hazeState, style = HazeMaterials.thin(surfaceColor))
-                } else {
-                    Modifier.background(surfaceColor.copy(alpha = 0.92f))
-                },
-            ),
-    ) {
-        // Hairline "krawędź szkła" (DESIGN.md 2.1) zamiast twardego Material elevation-shadow.
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(0.5.dp)
-                .background(Color.White.copy(alpha = 0.08f)),
-        )
+    Column(modifier = Modifier.fillMaxWidth()) {
         NavigationBar(
             containerColor = Color.Transparent,
             contentColor = MaterialTheme.colorScheme.onSurface,

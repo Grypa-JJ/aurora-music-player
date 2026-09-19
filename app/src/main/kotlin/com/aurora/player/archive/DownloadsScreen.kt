@@ -92,7 +92,8 @@ fun DownloadsScreen(
         if (activeDownloads.isEmpty() && downloadedTracks.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                    text = "Brak pobranych utworów. W Archiwum dotknij „Pobierz” przy ścieżce, żeby zapisać ją offline.",
+                    text = "Brak pobranych utworów. W Archiwum dotknij „Pobierz” przy ścieżce, żeby " +
+                        "zapisać ją offline, albo „Dodaj jako stream”, żeby dodać ją do biblioteki bez pobierania.",
                     style = AuroraTextStyles.Body,
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
                     modifier = Modifier.padding(tokens.spacing.l),
@@ -117,13 +118,17 @@ fun DownloadsScreen(
                 if (downloadedTracks.isNotEmpty()) {
                     item { ShelfHeading(title = "Pobrane") }
                     itemsIndexed(downloadedTracks, key = { _, track -> track.id }) { index, track ->
+                        // Etap 53: `uri` zaczynające się od "file:" = pobrane na dysk; inaczej to
+                        // pozycja dodana jako stream (gra bezpośrednio z archive.org).
+                        val isDownloaded = track.uri.startsWith("file:")
                         TrackListItem(
                             title = track.title,
                             artist = track.artist,
                             albumArtUrl = track.albumArtUri,
                             durationLabel = formatDuration(track.durationMs),
                             isCurrentlyPlaying = playbackState.currentTrack?.id == track.id,
-                            isSavedOffline = true,
+                            isSavedOffline = isDownloaded,
+                            isStreamed = !isDownloaded,
                             onClick = { viewModel.onPlayTracks(downloadedTracks, index) },
                             onMoreClick = { trackForMenu = track },
                         )
@@ -146,7 +151,7 @@ fun DownloadsScreen(
                 ),
                 TrackAction(
                     icon = Icons.Filled.DeleteOutline,
-                    label = "Usuń z pobranych",
+                    label = if (track.uri.startsWith("file:")) "Usuń z pobranych" else "Usuń ze strumienia",
                     onClick = { viewModel.onRemoveArchiveTrackFromLibrary(track.id); trackForMenu = null },
                 ),
             ),

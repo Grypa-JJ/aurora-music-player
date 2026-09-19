@@ -51,6 +51,18 @@ internal val BOTTOM_NAV_ROUTES = setOf(ROUTE_HOME, ROUTE_LIBRARY, ROUTE_DISCOVER
  */
 internal fun NavHostController.navigateToTab(route: String) {
     if (currentDestination?.route == route) return
+    // Zgłoszenie: "kliknięcie Home nie przenosi do Home" (czasem ląduje na pustym ekranie albo na
+    // czymś zupełnie innym). Działo się to, gdy user zostawiał zagnieżdżony ekran otwarty Z
+    // zakładki (np. podgląd miksu Geniusa otwarty z Home) i przełączał zakładkę BEZ cofnięcia się
+    // strzałką "Wstecz" — `popUpTo(ROUTE_HOME){saveState=true}` zapisywał WTEDY cały ten
+    // zagnieżdżony ekran razem z korzeniem zakładki, więc kolejny tap w tę samą zakładkę
+    // przywracał zgubiony ekran (czasem z nieaktualnym argumentem = pusty ekran) zamiast jej
+    // korzenia. Zanim przełączymy zakładkę, jeśli aktualny ekran NIE JEST korzeniem żadnej z 3
+    // zakładek, porzucamy go BEZ zapisu stanu (świadomie "zapomniany", jak zamknięcie modala) —
+    // korzenie zakładek (scroll, wybrany LibraryTab) nadal przeżywają przełączanie normalnie.
+    if (currentDestination?.route !in BOTTOM_NAV_ROUTES) {
+        popBackStack(ROUTE_HOME, inclusive = false)
+    }
     navigate(route) {
         popUpTo(ROUTE_HOME) { saveState = true }
         launchSingleTop = true

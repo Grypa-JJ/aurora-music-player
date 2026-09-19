@@ -1,6 +1,7 @@
 package com.aurora.player.playlist
 
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -115,7 +116,7 @@ fun PlaylistDetailScreen(
                 color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f).padding(start = tokens.spacing.xs),
+                modifier = Modifier.weight(1f).padding(start = tokens.spacing.xs).basicMarquee(),
             )
             Icon(
                 imageVector = Icons.Filled.Edit,
@@ -134,51 +135,59 @@ fun PlaylistDetailScreen(
             )
         }
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = tokens.spacing.m),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = "${tracks.size} utworów",
-                style = AuroraTextStyles.Label,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Filled.Add,
-                    contentDescription = "Dodaj utwory",
-                    tint = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier
-                        .padding(end = tokens.spacing.m)
-                        .size(24.dp)
-                        .clickable { showAddTracksSheet = true },
+        // Zgłoszenie: licznik+"Dodaj"+"Odtwórz" był NA STAŁE nad listą — ten sam problem co
+        // album/artysta/Genius, ten sam fix: pierwszy element `LazyColumn` (gdy lista niepusta).
+        val playlistHeader: @Composable () -> Unit = {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = tokens.spacing.xs, vertical = tokens.spacing.s),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "${tracks.size} utworów",
+                    style = AuroraTextStyles.Label,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.6f),
                 )
-                if (tracks.isNotEmpty()) {
-                    Button(onClick = { viewModel.onPlayTracks(tracks) }) {
-                        Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Text(text = "Odtwórz", modifier = Modifier.padding(start = tokens.spacing.xs))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Filled.Add,
+                        contentDescription = "Dodaj utwory",
+                        tint = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier
+                            .padding(end = tokens.spacing.m)
+                            .size(24.dp)
+                            .clickable { showAddTracksSheet = true },
+                    )
+                    if (tracks.isNotEmpty()) {
+                        Button(onClick = { viewModel.onPlayTracks(tracks) }) {
+                            Icon(imageVector = Icons.Filled.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Text(text = "Odtwórz", modifier = Modifier.padding(start = tokens.spacing.xs))
+                        }
                     }
                 }
             }
         }
 
         if (tracks.isEmpty()) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = "Playlista jest pusta. Dotknij +, żeby dodać utwory z biblioteki.",
-                    style = AuroraTextStyles.Body,
-                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                    modifier = Modifier.padding(tokens.spacing.l),
-                )
+            Column(modifier = Modifier.fillMaxSize()) {
+                playlistHeader()
+                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "Playlista jest pusta. Dotknij +, żeby dodać utwory z biblioteki.",
+                        style = AuroraTextStyles.Body,
+                        color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                        modifier = Modifier.padding(tokens.spacing.l),
+                    )
+                }
             }
         } else {
             LazyColumn(
                 state = lazyListState,
                 contentPadding = PaddingValues(horizontal = tokens.spacing.s, vertical = tokens.spacing.s),
             ) {
+                item { playlistHeader() }
                 itemsIndexed(tracks, key = { _, track -> track.id }) { index, track ->
                     ReorderableItem(reorderableState, key = track.id) { isDragging ->
                         val elevation by animateDpAsState(if (isDragging) 6.dp else 0.dp, label = "playlistItemElevation")

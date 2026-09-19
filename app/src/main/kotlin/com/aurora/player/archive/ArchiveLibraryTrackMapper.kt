@@ -4,10 +4,14 @@ import com.aurora.player.data.database.entity.ArchiveLibraryTrackEntity
 import com.aurora.player.domain.model.Track
 import com.aurora.player.domain.model.TrackSource
 
-/** Ścieżka pobrana na stałe do biblioteki jako [Track] — `uri` wskazuje lokalny plik, nie sieć. */
+/**
+ * Pozycja z biblioteki Archiwum jako [Track] — `uri` to lokalny plik gdy pobrana na stałe, albo
+ * [ArchiveLibraryTrackEntity.remoteUrl] (streaming z archive.org) gdy dodana tylko jako stream
+ * (`localFileUri == null`, patrz KDoc encji).
+ */
 fun ArchiveLibraryTrackEntity.toTrack(): Track = Track(
     id = trackId,
-    uri = localFileUri,
+    uri = localFileUri ?: remoteUrl,
     title = title,
     artist = artist,
     album = album,

@@ -64,6 +64,11 @@ import com.aurora.player.data.database.entity.TrackMetadataOverrideEntity
  * koszt `fallbackToDestructiveMigration` co subskrypcje podkastów/audiobooki wyżej.
  * Etap 43: `ArtistInfoEntity` — cache bio/gatunku/grafiki z TheAudioDB per wykonawca. Odtwarzalny
  * (appka sama dociągnie ponownie z sieci po utracie tabeli), ta sama zasada co reszta cache'y.
+ * Etap 53: `ArchiveLibraryTrackEntity` dostała `remoteUrl`/`category`, a `localFileUri` stała się
+ * nullable — pozycja może być teraz dodana jako STREAM (bez lokalnego pliku, `localFileUri = null`,
+ * gra z `remoteUrl`) obok dotychczasowego pełnego pobrania. `category` (Muzyka/Podcasty/Audiobooki/
+ * Radio) pozwala pokazać pobrane audiobooki/podcasty z Archiwum w tych samych ekranach co realne
+ * Audiobooki/Subskrypcje.
  */
 @Database(
     entities = [
@@ -85,7 +90,7 @@ import com.aurora.player.data.database.entity.TrackMetadataOverrideEntity
         ArchiveLibraryTrackEntity::class,
         ArtistInfoEntity::class,
     ],
-    version = 13,
+    version = 14,
     exportSchema = false,
 )
 abstract class AuroraDatabase : RoomDatabase() {

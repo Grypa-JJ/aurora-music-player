@@ -39,6 +39,7 @@ object PodcastRssParser {
             val audioUrl = enclosure.getAttribute("url").ifBlank { null } ?: continue
             val title = item.firstElementByTagName("title")?.textContent?.trim() ?: continue
             val guid = item.firstElementByTagName("guid")?.textContent?.trim()?.ifBlank { null } ?: audioUrl
+            val transcript = item.bestTranscript()
             episodes += PodcastEpisode(
                 guid = guid,
                 feedUrl = feedUrl,
@@ -47,9 +48,31 @@ object PodcastRssParser {
                 durationMs = parseDurationMs(item.firstElementByLocalName("duration")?.textContent),
                 publishedAtMs = parsePubDateMs(item.firstElementByTagName("pubDate")?.textContent),
                 description = item.firstElementByTagName("description")?.textContent?.trim().orEmpty(),
+                transcriptUrl = transcript?.first,
+                transcriptType = transcript?.second,
             )
         }
         return episodes
+    }
+
+    /**
+     * `<podcast:transcript>` (namespace Podcasting 2.0, https://podcastindex.org/namespace/1.0) —
+     * jeden odcinek może mieć KILKA wariantów tego samego transkryptu w różnych formatach
+     * (`text/plain`, `text/vtt`, `application/srt`, `application/json`). Wybieramy najprostszy do
+     * sparsowania bez dodatkowej zależności: plain > vtt/srt (napisy z prostym do zdjęcia
+     * timecode) > json (osobny, niestandaryzowany schemat, pomijamy).
+     */
+    private fun Element.bestTranscript(): Pair<String, String>? {
+        val nodes = getElementsByTagNameNS("*", "transcript")
+        val candidates = (0 until nodes.length).mapNotNull { i ->
+            val el = nodes.item(i) as? Element ?: return@mapNotNull null
+            val url = el.getAttribute("url").ifBlank { null } ?: return@mapNotNull null
+            val type = el.getAttribute("type").ifBlank { "text/plain" }
+            url to type
+        }
+        return candidates.firstOrNull { it.second.contains("text/plain") }
+            ?: candidates.firstOrNull { it.second.contains("vtt") || it.second.contains("srt") }
+            ?: candidates.firstOrNull()
     }
 
     private fun parseDocument(xml: String): Document? = try {
