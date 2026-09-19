@@ -3,6 +3,7 @@ package com.aurora.player.library
 import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.aurora.player.archive.PopularPolishArtists
 import com.aurora.player.archive.toTrack
 import com.aurora.player.audiobook.toTrack
 import com.aurora.player.cloud.GoogleDriveLibraryRepository
@@ -89,6 +90,9 @@ data class LibraryUiState(
 
 /** Ile razy mocniej ulubiony utwór liczy się w gustcie "Dla Ciebie" niż zwykła obecność w bibliotece. */
 private const val FAVORITE_TASTE_WEIGHT = 5
+
+/** Ile podpowiedzi wykonawcy pokazać razem (biblioteka + [PopularPolishArtists]) — patrz `archiveArtistSuggestions`. */
+private const val MAX_ARTIST_SUGGESTIONS = 6
 
 @HiltViewModel
 class LibraryViewModel @Inject constructor(
@@ -718,22 +722,32 @@ class LibraryViewModel @Inject constructor(
 
     /**
      * Podpowiedzi wykonawców pod wpisywany tekst w wyszukiwarce Archiwum — user: "algo, które
-     * proponuje nazwę artysty". Świadomie TYLKO z lokalnej biblioteki (bez sieci, bez zapytań do
-     * archive.org) — to i tak jedyni wykonawcy, których wyszukanie w Archiwum ma szansę coś
-     * znaczącego zwrócić (patrz [computeLocalTaste]), więc podpowiadanie kogokolwiek innego
-     * wprowadzałoby w błąd.
+     * proponuje nazwę artysty". Dwa źródła, biblioteka ma pierwszeństwo: (1) lokalna biblioteka —
+     * user na pewno CHCE tego wykonawcy, choć IA może nic z etree/netlabels nie mieć (patrz
+     * [computeLocalTaste]); (2) [PopularPolishArtists] jako dopełnienie, gdy user wpisuje kogoś,
+     * kogo jeszcze nie ma na urządzeniu, ale jest rozpoznawalny w PL — user: "dodaj top 100
+     * zespołów/artystów w PL + raperów z sukcesem". Bez sieci w obu przypadkach.
      */
     fun archiveArtistSuggestions(prefix: String): List<String> {
-        if (prefix.trim().length < 2) return emptyList()
         val normalized = prefix.trim().lowercase()
-        return _uiState.value.allTracks
+        if (normalized.length < 2) return emptyList()
+        val fromLibrary = _uiState.value.allTracks
             .asSequence()
             .map { it.artist }
             .filter { it.isNotBlank() && it.lowercase().contains(normalized) }
-            .distinct()
+            .distinctBy { it.lowercase() }
             .sortedBy { it.length }
-            .take(5)
+            .take(MAX_ARTIST_SUGGESTIONS)
             .toList()
+        val remaining = MAX_ARTIST_SUGGESTIONS - fromLibrary.size
+        if (remaining <= 0) return fromLibrary
+        val fromPopular = PopularPolishArtists.NAMES.asSequence()
+            .filter { candidate -> candidate.lowercase().contains(normalized) }
+            .filterNot { candidate -> fromLibrary.any { it.equals(candidate, ignoreCase = true) } }
+            .sortedBy { it.length }
+            .take(remaining)
+            .toList()
+        return fromLibrary + fromPopular
     }
 
     /**
