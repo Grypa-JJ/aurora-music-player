@@ -162,12 +162,19 @@ class ArchiveRepositoryImpl @Inject constructor(
      * Gdy region nie da wyników (niszowy język / brak treści w tym języku na IA), spadamy na Zachód
      * (UE/USA/Australia, patrz [WESTERN_FALLBACK_LANGUAGES]) z wykluczeniem rosyjskojęzycznych —
      * a dopiero jeśli i to nic nie zwróci, na zupełnie globalne top popularne.
+     *
+     * Zgłoszenie: bez [CURATED_COLLECTIONS_QUERY] samo `mediatype:audio AND language:(...)`
+     * posortowane po `downloads+desc` wyciągało śmieci ("ENGLISH Questions", "Tutu Installer") —
+     * duży, niemoderowany zbiór wszystkiego, co ktoś kiedykolwiek oznaczył jako audio, wygrywał nad
+     * realną muzyką/podcastami/audiobookami/radiem, bo te "popularne" pliki mają masę pobrań
+     * niezwiązanych z realnym zainteresowaniem treścią (boty, testy, powtarzane pobrania).
+     * Zweryfikowane bezpośrednio przez advancedsearch.php przed i po tej zmianie.
      */
     override suspend fun topPopular(limit: Int): List<ArchiveItem> = withContext(Dispatchers.IO) {
         val regionLanguage = LANGUAGE_TAGS[context.resources.configuration.locales[0].language.lowercase()]
         val regional = regionLanguage?.let {
             itemsCache.getOrPut("popular:$it:$limit") {
-                fetchItems("mediatype:audio AND language:($it)", limit, sort = "downloads+desc")
+                fetchItems("$CURATED_COLLECTIONS_QUERY AND mediatype:audio AND language:($it)", limit, sort = "downloads+desc")
             }
         }
         if (!regional.isNullOrEmpty()) return@withContext regional
@@ -178,7 +185,7 @@ class ArchiveRepositoryImpl @Inject constructor(
         if (western.isNotEmpty()) return@withContext western
 
         itemsCache.getOrPut("popular:$limit") {
-            fetchItems("mediatype:audio", limit, sort = "downloads+desc")
+            fetchItems("$CURATED_COLLECTIONS_QUERY AND mediatype:audio", limit, sort = "downloads+desc")
         }
     }
 
@@ -217,7 +224,11 @@ class ArchiveRepositoryImpl @Inject constructor(
      * Radio Programs + Old Time Radio dla radia.
      */
     private fun ArchiveCategory.collectionQuery(): String = when (this) {
-        ArchiveCategory.MUSIC -> "(collection:etree OR collection:netlabels OR collection:opensource_audio)"
+        // Zgłoszenie: `opensource_audio` ("Community Audio") to niemoderowany kosz wrzutek — testy,
+        // instalatory, nagrania mowy — nie muzyka. Posortowane po `downloads+desc` regularnie
+        // wygrywały śmieci typu "Tutu Installer"/"geometry_dash_1.9" nad realną muzyką z etree/
+        // netlabels. Usunięte świadomie, zweryfikowane bezpośrednio przez advancedsearch.php.
+        ArchiveCategory.MUSIC -> "(collection:etree OR collection:netlabels)"
         ArchiveCategory.PODCASTS -> "collection:podcasts"
         ArchiveCategory.AUDIOBOOKS -> "collection:audio_bookspoetry"
         ArchiveCategory.RADIO -> "(collection:radioprograms OR collection:oldtimeradio)"
@@ -444,9 +455,20 @@ class ArchiveRepositoryImpl @Inject constructor(
             "English", "German", "French", "Spanish", "Italian", "Polish", "Dutch", "Portuguese", "Swedish", "Czech", "Slovak",
         )
 
+        /**
+         * Unia realnych kolekcji, które appka faktycznie przegląda (Muzyka/Podcasty/Audiobooki/
+         * Radio, patrz `ArchiveCategory.collectionQuery`) — BEZ `opensource_audio` (niemoderowany
+         * kosz wrzutek). Używana wszędzie tam, gdzie [topPopular] sortuje po `downloads+desc` bez
+         * zawężenia do konkretnej kategorii, żeby nie wyciągać śmieci spoza tych kolekcji.
+         */
+        const val CURATED_COLLECTIONS_QUERY =
+            "(collection:etree OR collection:netlabels OR collection:podcasts OR " +
+                "collection:audio_bookspoetry OR collection:radioprograms OR collection:oldtimeradio)"
+
         /** `NOT language:(Russian)` jako dodatkowe zabezpieczenie — pozycja może mieć kilka języków w metadanych (np. "English, Russian"). */
         val WESTERN_FALLBACK_QUERY =
-            "mediatype:audio AND (${WESTERN_FALLBACK_LANGUAGES.joinToString(" OR ") { "language:($it)" }}) " +
+            "$CURATED_COLLECTIONS_QUERY AND mediatype:audio AND " +
+                "(${WESTERN_FALLBACK_LANGUAGES.joinToString(" OR ") { "language:($it)" }}) " +
                 "AND NOT language:(Russian)"
 
         /**
